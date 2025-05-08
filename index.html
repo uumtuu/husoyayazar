@@ -1,44 +1,22 @@
 <!DOCTYPE html>
 <html lang="tr">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="UTF-8">
+  <title>Test</title>
   <style>
     html, body {
       margin: 0;
-      padding: 0;
       height: 100%;
-      overflow: hidden;
+      background: black;
     }
-
     #background {
       width: 100vw;
       height: 100vh;
       object-fit: cover;
-      transition: opacity 0.5s ease;
     }
   </style>
 </head>
-<body onclick="changeImage()">
-  <img id="background" src="malhusoo.gif" />
-  <script>
-    const images = [
-      "malhusoo.gif",
-      "patapim.gif",
-      "kecihuso.jpg",
-      "plane-memes.gif"
-    ];
-
-    let index = 0;
-    const bg = document.getElementById("background");
-
-    function changeImage() {
-      index = (index + 1) % images.length;
-      bg.style.opacity = 0;
-      setTimeout(() => {
-        bg.src = images[index];
-        bg.style.opacity = 1;
-      }, 300);
-    }
-  </script>
+<body>
+  <img id="background" src="malhusoo.gif" alt="gif">
 </body>
 </html>
