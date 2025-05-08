@@ -2,33 +2,61 @@
 <html lang="tr">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Resim Galerisi</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Görsel Sıralayıcı</title>
   <style>
-    body {
-      font-family: sans-serif;
-      background: #f8f8f8;
+    html, body {
       margin: 0;
       padding: 0;
+      height: 100%;
+      overflow: hidden;
+      background-color: black;
+      cursor: pointer;
     }
-    .gallery {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: center;
-      gap: 10px;
-      padding: 20px;
+
+    #background {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      object-fit: cover;
+      z-index: -1;
+      transition: opacity 0.5s ease;
     }
-    .gallery img {
-      width: 300px;
-      border-radius: 5px;
-      box-shadow: 0 0 10px rgba(0,0,0,0.1);
+
+    .click-text {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: white;
+      font-family: sans-serif;
+      background-color: rgba(0, 0, 0, 0.6);
+      padding: 10px 20px;
+      border-radius: 8px;
     }
   </style>
 </head>
-<body>
-  <div class="gallery">
-    <img src="patapim.gif" style="position:fixed; top:0; left:0; width:100vw; height:100vh; object-fit:cover; z-index:-1;">
+<body onclick="changeImage()">
+  <img id="background" src="gorsel1.gif" alt="Görsel">
+  <div class="click-text">Tıklayınca değişir</div>
 
-  </div>
+  <script>
+    const images = ["malhusoo.gif", "patapim.gif", "GbZXV4DaEAAoT1R.jpg", "plane-memes.gif"];
+    let index = 0;
+
+    function changeImage() {
+      index++;
+      if (index < images.length) {
+        const bg = document.getElementById("background");
+        bg.style.opacity = 0;
+        setTimeout(() => {
+          bg.src = images[index];
+          bg.style.opacity = 1;
+        }, 300);
+      }
+    }
+  </script>
 </body>
 </html>
