@@ -1,68 +1,86 @@
 <!DOCTYPE html>
 <html lang="tr">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>HÜSOYA YAZAR</title>
+  <meta charset="UTF-8">
+  <title>Keçili Kaçan Yazı</title>
   <style>
     html, body {
       margin: 0;
       padding: 0;
+      background: black;
       height: 100%;
       overflow: hidden;
-      background-color: black;
       cursor: pointer;
     }
-
-    #background {
+    #gorsel {
+      width: 100vw;
+      height: 100vh;
       position: fixed;
       top: 0;
       left: 0;
-      width: 100vw;
-      height: 100vh;
-      object-fit: cover;
-      z-index: -1;
-      transition: opacity 0.5s ease;
     }
-
-    .click-text {
+    #escape-text {
       position: absolute;
-      top: 20px;
+      top: 50%;
       left: 50%;
-      transform: translateX(-50%);
+      transform: translate(-50%, -50%);
       color: white;
       font-family: sans-serif;
       background-color: rgba(0, 0, 0, 0.6);
       padding: 10px 20px;
       border-radius: 8px;
-      z-index: 1;
+      user-select: none;
+      pointer-events: none;
+      transition: top 0.05s, left 0.05s;
     }
   </style>
 </head>
 <body>
-  <img id="background" src="malhusoo.gif" alt="Görsel" />
+
+  <img id="gorsel" src="./kecihuso.jpg" alt="Görsel">
+  <div id="escape-text">Keçiyi beslemek için tıkla</div>
+  <audio id="goatSound" src="./kecisound.mp3"></audio>
 
   <script>
     const images = [
-      "malhusoo.gif",
-      "patapim.gif",
-      "kecihuso.jpg",
-      "plane-memes.gif"
+      "./kecihuso.jpg",
+      "./malhusoo.gif",
+      "./patapim.gif",
+      "./plane-memes.gif"
     ];
-    let index = 0;
+    let currentIndex = 0;
 
-    window.onload = () => {
-      const bg = document.getElementById("background");
+    const gorsel = document.getElementById("gorsel");
+    const text = document.getElementById("escape-text");
+    const sound = document.getElementById("goatSound");
 
-      document.body.onclick = () => {
-        index = (index + 1) % images.length;
-        bg.style.opacity = 0;
-        setTimeout(() => {
-          bg.src = images[index];
-          bg.style.opacity = 1;
-        }, 300);
-      };
-    };
+    document.addEventListener('mousemove', (e) => {
+      const mouseX = e.clientX;
+      const mouseY = e.clientY;
+      const rect = text.getBoundingClientRect();
+      const textX = rect.left + rect.width / 2;
+      const textY = rect.top + rect.height / 2;
+      const dx = mouseX - textX;
+      const dy = mouseY - textY;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      const threshold = 100;
+      if (distance < threshold) {
+        const angle = Math.atan2(dy, dx);
+        const moveX = Math.cos(angle) * -300;
+        const moveY = Math.sin(angle) * -300;
+        const newLeft = Math.min(window.innerWidth - rect.width / 2, Math.max(rect.width / 2, rect.left + moveX));
+        const newTop = Math.min(window.innerHeight - rect.height / 2, Math.max(rect.height / 2, rect.top + moveY));
+        text.style.left = `${newLeft}px`;
+        text.style.top = `${newTop}px`;
+      }
+    });
+
+    document.addEventListener('click', () => {
+      currentIndex = (currentIndex + 1) % images.length;
+      gorsel.setAttribute("src", images[currentIndex]);
+      sound.currentTime = 0;
+      sound.play();
+    });
   </script>
 </body>
 </html>
