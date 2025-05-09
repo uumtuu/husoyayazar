@@ -2,6 +2,7 @@
 <html lang="tr">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"> 
   <title>Hüsoya Yazar</title>
   <style>
     html, body {
@@ -18,6 +19,7 @@
       position: fixed;
       top: 0;
       left: 0;
+      object-fit: cover;
     }
     #escape-text {
       position: absolute;
@@ -27,8 +29,9 @@
       color: white;
       font-family: sans-serif;
       background-color: rgba(0, 0, 0, 0.6);
-      padding: 10px 20px;
+      padding: clamp(5px, 2vw, 20px) clamp(10px, 4vw, 20px); 
       border-radius: 8px;
+      font-size: clamp(14px, 4vw, 20px); 
       user-select: none;
       pointer-events: none;
       transition: top 0.05s, left 0.05s;
@@ -39,8 +42,9 @@
       color: yellow;
       font-family: sans-serif;
       background-color: rgba(0, 0, 0, 0.8);
-      padding: 10px 20px;
+      padding: clamp(5px, 2vw, 20px) clamp(10px, 4vw, 20px); 
       border-radius: 8px;
+      font-size: clamp(14px, 4vw, 20px); 
       display: none;
       pointer-events: none;
     }
@@ -48,10 +52,10 @@
 </head>
 <body>
 
-  <img id="gorsel" src="./kecihuso.jpg" alt="Görsel">
+  <img id="gorsel" src="/kecihuso.jpg" alt="Görsel">
   <div id="escape-text">Keçiyi beslemek için tıkla</div>
   <div id="food-text"></div>
-  <audio id="goatSound" src="./kecisound.mp3"></audio>
+  <audio id="goatSound" src="/kecisound.mp3"></audio>
 
   <script>
     const images = [
@@ -91,12 +95,26 @@
       const dy = mouseY - textY;
       const distance = Math.sqrt(dx * dx + dy * dy);
       const threshold = 100;
+
       if (distance < threshold) {
         const angle = Math.atan2(dy, dx);
-        const moveX = Math.cos(angle) * -300;
-        const moveY = Math.sin(angle) * -300;
-        const newLeft = Math.min(window.innerWidth - rect.width / 2, Math.max(rect.width / 2, rect.left + moveX));
-        const newTop = Math.min(window.innerHeight - rect.height / 2, Math.max(rect.height / 2, rect.top + moveY));
+        const moveX = Math.cos(angle) * -500; 
+        const moveY = Math.sin(angle) * -500;
+
+        let newLeft = rect.left + moveX;
+        let newTop = rect.top + moveY;
+
+        const minLeft = rect.width / 2;
+        const maxLeft = window.innerWidth - rect.width / 2;
+        const minTop = rect.height / 2;
+        const maxTop = window.innerHeight - rect.height / 2;
+
+        // Kenarlara çarpıyorsa rastgele bir pozisyona sıçra
+        if (newLeft < minLeft || newLeft > maxLeft || newTop < minTop || newTop > maxTop) {
+          newLeft = Math.random() * (window.innerWidth - rect.width) + rect.width / 2;
+          newTop = Math.random() * (window.innerHeight - rect.height) + rect.height / 2;
+        }
+
         text.style.left = `${newLeft}px`;
         text.style.top = `${newTop}px`;
       }
@@ -120,7 +138,7 @@
       foodText.style.display = 'block';
       setTimeout(() => {
         foodText.style.display = 'none';
-      }, 10000);
+      }, 1000); 
     });
   </script>
 </body>
