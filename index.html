@@ -85,7 +85,6 @@
     const foodText = document.getElementById("food-text");
     const sound = document.getElementById("goatSound");
 
-    // Başlangıçta yazının pozisyonunu doğru şekilde ayarla
     text.style.left = `${window.innerWidth / 2}px`;
     text.style.top = `${window.innerHeight / 2}px`;
 
@@ -102,28 +101,24 @@
 
       if (distance < threshold) {
         const angle = Math.atan2(dy, dx);
-        const moveDistance = 600; // Mesafeyi biraz azalttık, doğal hareket için
+        const moveDistance = 600; 
         const moveX = Math.cos(angle) * -moveDistance;
         const moveY = Math.sin(angle) * -moveDistance;
 
         let newLeft = rect.left + moveX;
         let newTop = rect.top + moveY;
 
-        // Ekran sınırlarını kontrol et ve ekran içinde tut
         const minLeft = rect.width / 2;
         const maxLeft = window.innerWidth - rect.width / 2;
         const minTop = rect.height / 2;
         const maxTop = window.innerHeight - rect.height / 2;
 
-        // Sınırlara çarpıyorsa sınırda tut
         newLeft = Math.max(minLeft, Math.min(maxLeft, newLeft));
         newTop = Math.max(minTop, Math.min(maxTop, newTop));
 
-        // Pozisyon güncellemesi
         text.style.left = `${newLeft}px`;
         text.style.top = `${newTop}px`;
 
-        // Debug log
         console.log(`New position - Left: ${newLeft}, Top: ${newTop}`);
       }
     });
