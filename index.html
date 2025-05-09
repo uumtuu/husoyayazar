@@ -33,12 +33,24 @@
       pointer-events: none;
       transition: top 0.05s, left 0.05s;
     }
+    #food-text {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      color: yellow;
+      font-family: sans-serif;
+      background-color: rgba(0, 0, 0, 0.8);
+      padding: 10px 20px;
+      border-radius: 8px;
+      display: none;
+      pointer-events: none;
+    }
   </style>
 </head>
 <body>
 
   <img id="gorsel" src="./kecihuso.jpg" alt="Görsel">
-  <div id="escape-text">KEÇİyi beslemek için tıkla</div>
+  <div id="escape-text">Keçiyi beslemek için tıkla</div>
+  <div id="food-text"></div>
   <audio id="goatSound" src="./kecisound.mp3"></audio>
 
   <script>
@@ -48,10 +60,25 @@
       "./patapim.gif",
       "./plane-memes.gif"
     ];
+    const foods = [
+      "burger king benim ikilim",
+      "burger king kral ikili",
+      "komagene porsiyon çiğ köfte",
+      "arbys",
+      "1.5 adana iskender",
+      "kremalı mantarlı kaşarlı tavuk",
+      "kiremitte konya tava",
+      "tavuk incikten iskender",
+      "kızartma bazlama + sucuklu yumurta",
+      "mangal söyledik knk et, tavuk ne varsa",
+      "yulaf",
+      "ballı yulaf"
+    ];
     let currentIndex = 0;
 
     const gorsel = document.getElementById("gorsel");
     const text = document.getElementById("escape-text");
+    const foodText = document.getElementById("food-text");
     const sound = document.getElementById("goatSound");
 
     document.addEventListener('mousemove', (e) => {
@@ -80,6 +107,20 @@
       gorsel.setAttribute("src", images[currentIndex]);
       sound.currentTime = 0;
       sound.play();
+
+      const randomFood = foods[Math.floor(Math.random() * foods.length)];
+      foodText.textContent = randomFood;
+      
+      const rect = foodText.getBoundingClientRect();
+      const randomLeft = Math.random() * (window.innerWidth - rect.width) + rect.width / 2;
+      const randomTop = Math.random() * (window.innerHeight - rect.height) + rect.height / 2;
+      foodText.style.left = `${randomLeft}px`;
+      foodText.style.top = `${randomTop}px`;
+      
+      foodText.style.display = 'block';
+      setTimeout(() => {
+        foodText.style.display = 'none';
+      }, 10000);
     });
   </script>
 </body>
