@@ -64,7 +64,7 @@ function init3D() {
             });
             
             const aspect = texture.image.width / texture.image.height;
-            const meshWidth = 80; // GÖRSEL BOYUTU ARTIRILDI
+            const meshWidth = 150; // BOYUT SON KEZ ARTIRILDI
             const meshHeight = meshWidth / aspect;
 
             const geometry = new THREE.PlaneGeometry(meshWidth, meshHeight);
@@ -135,9 +135,10 @@ function onFirstClick() {
     titleText.removeEventListener('click', onFirstClick);
     titleText.style.pointerEvents = 'none';
 
-    // 🛑 NİHAİ KONUM ENGELİ: GSAP animasyonundan önce ve sonra pozisyonu sıfırla
+    // 🛑 NİHAİ KONUM ENGELİ: Tüm transform verilerini sıfırla
     gsap.set(titleText, { x: 0, y: 0, scale: 1, rotation: 0 }); 
 
+    // Başlık SADECE Opaklık ile kayboluyor. KONUM SABİT.
     gsap.to(titleText, { 
         opacity: 0, 
         duration: 1.5, 
