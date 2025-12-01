@@ -51,6 +51,7 @@ function init3D() {
     particles = new THREE.Points(geometry, material);
     scene.add(particles);
 
+    // Ortadaki Silik Resmi Ekle (husospace.png)
     textureLoader.load(
         CENTER_IMAGE_URL, 
         (texture) => {
@@ -63,7 +64,7 @@ function init3D() {
             });
             
             const aspect = texture.image.width / texture.image.height;
-            const meshWidth = 25; 
+            const meshWidth = 80; // GÖRSEL BOYUTU ARTIRILDI
             const meshHeight = meshWidth / aspect;
 
             const geometry = new THREE.PlaneGeometry(meshWidth, meshHeight);
@@ -134,12 +135,17 @@ function onFirstClick() {
     titleText.removeEventListener('click', onFirstClick);
     titleText.style.pointerEvents = 'none';
 
+    // 🛑 NİHAİ KONUM ENGELİ: GSAP animasyonundan önce ve sonra pozisyonu sıfırla
     gsap.set(titleText, { x: 0, y: 0, scale: 1, rotation: 0 }); 
 
     gsap.to(titleText, { 
         opacity: 0, 
         duration: 1.5, 
-        delay: 0.5 
+        delay: 0.5,
+        onComplete: () => {
+             // Animasyon sonrası transform değerlerini sıfırla
+             titleText.style.transform = "none";
+        }
     });
 
     sound.currentTime = 0;
