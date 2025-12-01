@@ -8,13 +8,13 @@ let activeFoodSprites = [];
 let clickCount = 0; 
 let particles; 
 
-const initialTitle = "Hüsoya mı Yazar?"; // HTML'den sabit metin alındı
+const initialTitle = "Hüsoya mı Yazar?";
 
 const titleText = document.getElementById('title-text');
 const besleText = document.getElementById('besle-text');
 const container = document.getElementById('container');
 const sound = document.getElementById("goatSound");
-sound.src = "BRUTA.mp3"; 
+
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -56,7 +56,7 @@ function animate() {
     if (particles) {
         const positionsArray = particles.geometry.attributes.position.array;
         for (let i = 2; i < positionsArray.length; i += 3) {
-            positionsArray[i] += 0.5; 
+            positionsArray[i] += 1.2; 
             if (positionsArray[i] > camera.position.z) {
                 positionsArray[i] -= 1000;
             }
@@ -65,7 +65,7 @@ function animate() {
     }
 
      activeFoodSprites.forEach(sprite => {
-        sprite.position.z += 0.5; 
+        sprite.position.z += 1.2; 
         
         if (sprite.position.z > camera.position.z + 10) {
             scene.remove(sprite);
@@ -85,52 +85,77 @@ function onWindowResize() {
 
 
 function animateTitle() {
-    titleText.classList.remove('hidden');
-    titleText.style.opacity = '0'; // Başlangıçta görünmez yap
-    
-    // ⭐ DÜZELTME 1: Fade-in efektini geri getir
-    gsap.to(titleText, { 
-        opacity: 1, 
+    titleText.style.display = 'none';
+
+    const initialSprite = createTextSprite(initialTitle, 'white', 3, 1, true); 
+    initialSprite.name = "introTitle"; 
+
+    // Giriş Animasyonu
+    gsap.to(initialSprite.position, {
+        z: camera.position.z - 200, 
         duration: 3, 
-        delay: 1,
+        ease: "linear",
         onComplete: () => {
-             titleText.style.pointerEvents = 'auto'; 
-             titleText.addEventListener('click', onFirstClick);
+             // GÜVENLİK GEÇİŞİ: Animasyon bittikten sonra 4 saniye bekle
+             setTimeout(() => {
+                const introTitleSprite = scene.getObjectByName("introTitle");
+                scene.remove(introTitleSprite);
+                renderer.domElement.addEventListener('click', onSceneClick); 
+             }, 4000); 
         }
     });
+    
+    gsap.to(initialSprite.scale, {
+        x: 30, 
+        y: 10,
+        duration: 3, 
+        ease: "linear"
+    });
+    
+
+    renderer.domElement.addEventListener('click', onEarlyIntroClick);
 }
+
+function onEarlyIntroClick(event) {
+    const introTitleSprite = scene.getObjectByName("introTitle");
+
+    if (introTitleSprite) {
+        
+        gsap.killTweensOf(introTitleSprite.position);
+        gsap.killTweensOf(introTitleSprite.scale);
+        
+        renderer.domElement.removeEventListener('click', onEarlyIntroClick);
+        
+
+        gsap.to(introTitleSprite.position, {
+            z: camera.position.z + 50,
+            duration: 0.5,
+            ease: "power1.in",
+            onComplete: () => {
+                scene.remove(introTitleSprite);
+            }
+        });
+
+        // Besle metnini gizle ve yemek fazını başlat
+        besleText.classList.remove('hidden');
+        gsap.to(besleText, { 
+            opacity: 0, 
+            duration: 0.1,
+            onComplete: () => {
+                 besleText.style.display = 'none';
+                 renderer.domElement.addEventListener('click', onSceneClick);
+            }
+        });
+    }
+}
+
 
 function onFirstClick() {
-    titleText.removeEventListener('click', onFirstClick);
-    titleText.style.pointerEvents = 'none';
-
-    // HTML Başlığını Hemen Gizle
-    titleText.style.opacity = '0';
-    titleText.style.display = 'none';
-    titleText.style.transform = 'none'; 
     
-    // Aynı Metni Taşıyan 3D Sprite Oluştur
-    createTextSprite(initialTitle, 'white', 30, 10, true); 
-
-    sound.currentTime = 0;
-    sound.play();
-
-    
-    // ⭐ DÜZELTME 2: Scene click event'ini (yemek fırlatma) hemen ekle
-    renderer.domElement.addEventListener('click', onSceneClick);
-
-    // Besle metninin kaybolması (Gecikmeli kalsa da, artık tıklamayı engellemiyor)
-    besleText.classList.remove('hidden');
-    gsap.to(besleText, { 
-        opacity: 0, duration: 2, delay: 1.5,
-        onComplete: () => {
-             besleText.style.display = 'none';
-        }
-    });
 }
 
 
-function createTextSprite(text, color = 'yellow', baseScaleX = 15, baseScaleY = 5, center = false) {
+function createTextSprite(text, color = 'white', baseScaleX = 15, baseScaleY = 5, center = false) {
     const canvas = document.createElement('canvas');
     const context = canvas.getContext('2d');
     
@@ -160,7 +185,8 @@ function createTextSprite(text, color = 'yellow', baseScaleX = 15, baseScaleY = 
     sprite.scale.set(baseScaleX * scaleFactor, baseScaleY, 1); 
 
     if (center) {
-        sprite.position.set(0, 0, camera.position.z - 100);
+        sprite.position.set(0, 0, camera.position.z - 500);
+        sprite.scale.set(3, 1, 1);
         material.opacity = 1;
     } else {
         sprite.position.set(
@@ -172,6 +198,7 @@ function createTextSprite(text, color = 'yellow', baseScaleX = 15, baseScaleY = 
     
     scene.add(sprite);
     activeFoodSprites.push(sprite);
+    return sprite;
 }
 
 
