@@ -85,6 +85,7 @@ function onWindowResize() {
 
 function animateTitle() {
     titleText.classList.remove('hidden');
+    // Başlangıçta GSAP ile opaklığı açıyoruz
     gsap.to(titleText, { 
         opacity: 1, 
         duration: 3, 
@@ -100,16 +101,10 @@ function onFirstClick() {
     titleText.removeEventListener('click', onFirstClick);
     titleText.style.pointerEvents = 'none';
 
-    gsap.set(titleText, { x: 0, y: 0, scale: 1, rotation: 0 }); 
-
-    gsap.to(titleText, { 
-        opacity: 0, 
-        duration: 1.5, 
-        delay: 0.5,
-        onComplete: () => {
-             titleText.style.transform = "none";
-        }
-    });
+    // ⭐ YENİ ÇÖZÜM: GSAP HAREKETİ DEVRE DIŞI BIRAKILDI. Sadece CSS Opaklık.
+    titleText.style.opacity = '0';
+    // Ekstra koruma: Başlıkta herhangi bir transform olmasın
+    titleText.style.transform = 'none'; 
 
     sound.currentTime = 0;
     sound.play();
