@@ -85,39 +85,38 @@ function onWindowResize() {
 
 function animateTitle() {
     titleText.classList.remove('hidden');
-    // Başlangıçta GSAP ile opaklığı açıyoruz
-    gsap.to(titleText, { 
-        opacity: 1, 
-        duration: 3, 
-        delay: 1,
-        onComplete: () => {
-             titleText.style.pointerEvents = 'auto'; 
-             titleText.addEventListener('click', onFirstClick);
-        }
-    });
+    // Başlangıçta görünür hale getir
+    titleText.style.opacity = '1';
+
+    titleText.style.pointerEvents = 'auto'; 
+    titleText.addEventListener('click', onFirstClick);
 }
 
 function onFirstClick() {
     titleText.removeEventListener('click', onFirstClick);
     titleText.style.pointerEvents = 'none';
 
-    // ⭐ YENİ ÇÖZÜM: GSAP HAREKETİ DEVRE DIŞI BIRAKILDI. Sadece CSS Opaklık.
-    titleText.style.opacity = '0';
-    // Ekstra koruma: Başlıkta herhangi bir transform olmasın
-    titleText.style.transform = 'none'; 
+    // ⭐ NİHAİ ÇÖZÜM: Direkt style ile şeffaflık ve görünmezlik
+    titleText.style.opacity = '0'; 
+    titleText.style.transform = 'none'; // Transformu sıfırla
 
     sound.currentTime = 0;
     sound.play();
 
-
-    besleText.classList.remove('hidden');
-    gsap.to(besleText, { 
-        opacity: 0, duration: 2, delay: 1.5,
-        onComplete: () => {
-             besleText.style.display = 'none';
-             renderer.domElement.addEventListener('click', onSceneClick);
-        }
-    });
+    
+    // Yavaşça kaybolma için zamanlayıcı kullanıyoruz
+    setTimeout(() => {
+        titleText.style.display = 'none';
+        
+        besleText.classList.remove('hidden');
+        gsap.to(besleText, { 
+            opacity: 0, duration: 2, delay: 1.5,
+            onComplete: () => {
+                 besleText.style.display = 'none';
+                 renderer.domElement.addEventListener('click', onSceneClick);
+            }
+        });
+    }, 500); // Opaklık değişim süresi (0.5s) sonrası gizle
 }
 
 
