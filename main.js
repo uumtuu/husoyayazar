@@ -60,11 +60,13 @@ function init3D() {
                 map: texture,
                 transparent: true,
                 opacity: 0.4, 
+                // YENİ DÜZELTME: Şeffaflık için
+                alphaTest: 0.01, 
                 side: THREE.DoubleSide
             });
             
             const aspect = texture.image.width / texture.image.height;
-            const meshWidth = 150; // BOYUT SON KEZ ARTIRILDI
+            const meshWidth = 80; 
             const meshHeight = meshWidth / aspect;
 
             const geometry = new THREE.PlaneGeometry(meshWidth, meshHeight);
@@ -135,16 +137,14 @@ function onFirstClick() {
     titleText.removeEventListener('click', onFirstClick);
     titleText.style.pointerEvents = 'none';
 
-    // 🛑 NİHAİ KONUM ENGELİ: Tüm transform verilerini sıfırla
+    // BAŞLIK HAREKET KONTROLÜ
     gsap.set(titleText, { x: 0, y: 0, scale: 1, rotation: 0 }); 
 
-    // Başlık SADECE Opaklık ile kayboluyor. KONUM SABİT.
     gsap.to(titleText, { 
         opacity: 0, 
         duration: 1.5, 
         delay: 0.5,
         onComplete: () => {
-             // Animasyon sonrası transform değerlerini sıfırla
              titleText.style.transform = "none";
         }
     });
