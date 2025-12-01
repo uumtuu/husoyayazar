@@ -8,7 +8,6 @@ let activeFoodSprites = [];
 let clickCount = 0; 
 let particles; 
 
-// HTML metnini al
 const initialTitle = "Hüsoya mı Yazar?"; // HTML'den sabit metin alındı
 
 const titleText = document.getElementById('title-text');
@@ -87,37 +86,45 @@ function onWindowResize() {
 
 function animateTitle() {
     titleText.classList.remove('hidden');
-    // Sadece opaklıkla görünür yapıyoruz
-    titleText.style.opacity = '1';
-
-    titleText.style.pointerEvents = 'auto'; 
-    titleText.addEventListener('click', onFirstClick);
+    titleText.style.opacity = '0'; // Başlangıçta görünmez yap
+    
+    // ⭐ DÜZELTME 1: Fade-in efektini geri getir
+    gsap.to(titleText, { 
+        opacity: 1, 
+        duration: 3, 
+        delay: 1,
+        onComplete: () => {
+             titleText.style.pointerEvents = 'auto'; 
+             titleText.addEventListener('click', onFirstClick);
+        }
+    });
 }
 
 function onFirstClick() {
     titleText.removeEventListener('click', onFirstClick);
     titleText.style.pointerEvents = 'none';
 
-    // 1. HTML Başlığını Hemen Gizle ve Kaldır
+    // HTML Başlığını Hemen Gizle
     titleText.style.opacity = '0';
     titleText.style.display = 'none';
     titleText.style.transform = 'none'; 
     
-    // 2. Aynı Metni Taşıyan 3D Sprite Oluştur ve Fırlat
-    // Metin diğer yiyecekler gibi ekranın ortasından başlayacak
-    createTextSprite(initialTitle, 'white', 30, 10, true); // Büyük boyutta, ortadan başla
+    // Aynı Metni Taşıyan 3D Sprite Oluştur
+    createTextSprite(initialTitle, 'white', 30, 10, true); 
 
     sound.currentTime = 0;
     sound.play();
 
     
-    // Besle metninin kaybolması
+    // ⭐ DÜZELTME 2: Scene click event'ini (yemek fırlatma) hemen ekle
+    renderer.domElement.addEventListener('click', onSceneClick);
+
+    // Besle metninin kaybolması (Gecikmeli kalsa da, artık tıklamayı engellemiyor)
     besleText.classList.remove('hidden');
     gsap.to(besleText, { 
         opacity: 0, duration: 2, delay: 1.5,
         onComplete: () => {
              besleText.style.display = 'none';
-             renderer.domElement.addEventListener('click', onSceneClick);
         }
     });
 }
@@ -152,13 +159,10 @@ function createTextSprite(text, color = 'yellow', baseScaleX = 15, baseScaleY = 
     const scaleFactor = canvasWidth / 150; 
     sprite.scale.set(baseScaleX * scaleFactor, baseScaleY, 1); 
 
-    // Konum Ayarı: Eğer center true ise, tam ortadan başla (Hüsoya mı Yazar?)
     if (center) {
         sprite.position.set(0, 0, camera.position.z - 100);
-        // Beyaz metin için biraz daha belirgin opaklık
         material.opacity = 1;
     } else {
-        // Diğer yiyecekler rastgele fırlatılıyor
         sprite.position.set(
             (Math.random() - 0.5) * 100,
             (Math.random() - 0.5) * 100,
@@ -175,7 +179,7 @@ function onSceneClick(event) {
     clickCount++; 
 
     const randomFood = foods[Math.floor(Math.random() * foods.length)];
-    createTextSprite(randomFood, 'yellow', 15, 5, false); // false, rastgele konumdan fırlatır
+    createTextSprite(randomFood, 'yellow', 15, 5, false); 
 
     const minClicks = 5;
     const maxClicks = 10;
