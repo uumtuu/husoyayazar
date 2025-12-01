@@ -7,7 +7,7 @@ const foods = [
 let activeFoodSprites = []; 
 let clickCount = 0; 
 let particles; 
-
+const CURRENT_SPEED = 0.8; 
 const initialTitle = "Hüsoya mı Yazar?";
 
 const titleText = document.getElementById('title-text');
@@ -90,17 +90,17 @@ function animateTitle() {
     const initialSprite = createTextSprite(initialTitle, 'white', 3, 1, true); 
     initialSprite.name = "introTitle"; 
 
-    // Giriş Animasyonu
+
     gsap.to(initialSprite.position, {
         z: camera.position.z - 200, 
         duration: 3, 
         ease: "linear",
         onComplete: () => {
-             // Animasyon bittikten sonra 4 saniye bekle
+
              setTimeout(() => {
                 const introTitleSprite = scene.getObjectByName("introTitle");
                 scene.remove(introTitleSprite);
-                // ⭐ TEK TIKLAMA GÜVENLİĞİ: Sadece bekleme bittikten sonra yemek fırlatma dinleyicisini ekle
+
                 renderer.domElement.addEventListener('click', onSceneClick); 
              }, 4000); 
         }
@@ -113,11 +113,11 @@ function animateTitle() {
         ease: "linear"
     });
     
-    // Erken tıklama dinleyicisi tamamen kaldırıldı.
+    
 }
 
 
-// onEarlyIntroClick fonksiyonu tamamen kaldırıldı.
+
 
 
 function onSceneClick(event) {
