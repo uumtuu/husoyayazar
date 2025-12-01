@@ -1,5 +1,3 @@
-// --- 1. SABİT TANIMLAMALAR ---
-// CENTER_IMAGE_URL ve images dizisi temizlendi, sadece foods kaldı.
 const foods = [
     "burger king benim ikilim", "burger king kral ikili", "komagene porsiyon çiğ köfte",
     "arbys", "1.5 adana iskender", "kremalı mantarlı kaşarlı tavuk",
@@ -11,20 +9,17 @@ let clickCount = 0;
 let particles; 
 
 
-// --- 2. DOM ELEMANLARI ---
 const titleText = document.getElementById('title-text');
 const besleText = document.getElementById('besle-text');
 const container = document.getElementById('container');
 const sound = document.getElementById("goatSound");
 sound.src = "BRUTA.mp3"; 
 
-// --- 3. THREE.JS VE 3D AYARLAR ---
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 const particleCount = 45000; 
 const positions = new Float32Array(particleCount * 3);
-// textureLoader artık kullanılmıyor, kaldırıldı.
 
 
 function init3D() {
@@ -48,8 +43,6 @@ function init3D() {
     });
     particles = new THREE.Points(geometry, material);
     scene.add(particles);
-
-    // Ortadaki Silik Resmi Ekleme Kodu Tamamen Kaldırıldı.
 
     animateTitle();
 
