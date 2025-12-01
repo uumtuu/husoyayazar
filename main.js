@@ -112,7 +112,7 @@ function animateTitle() {
         ease: "linear"
     });
     
-
+    // Erken tıklama dinleyicisi eklenir
     renderer.domElement.addEventListener('click', onEarlyIntroClick);
 }
 
@@ -126,7 +126,7 @@ function onEarlyIntroClick(event) {
         
         renderer.domElement.removeEventListener('click', onEarlyIntroClick);
         
-
+        // Başlığı hızla fırlat ve kaldır
         gsap.to(introTitleSprite.position, {
             z: camera.position.z + 50,
             duration: 0.5,
