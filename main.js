@@ -1,4 +1,4 @@
-// --- 1. SABİT TANIMLAMALAR ---
+
 const CENTER_IMAGE_URL = "husospace.png"; 
 
 const images = [
@@ -16,14 +16,14 @@ let clickCount = 0;
 let particles; 
 
 
-// --- 2. DOM ELEMANLARI ---
+
 const titleText = document.getElementById('title-text');
 const besleText = document.getElementById('besle-text');
 const container = document.getElementById('container');
 const sound = document.getElementById("goatSound");
 sound.src = "BRUTA.mp3"; 
 
-// --- 3. THREE.JS VE 3D AYARLAR ---
+
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -32,7 +32,7 @@ const positions = new Float32Array(particleCount * 3);
 const textureLoader = new THREE.TextureLoader();
 
 
-// --- 4. 3D BAŞLATMA VE ANİMASYON FONKSİYONLARI ---
+
 function init3D() {
     renderer.setSize(window.innerWidth, window.innerHeight);
     container.appendChild(renderer.domElement);
@@ -40,7 +40,7 @@ function init3D() {
 
     scene.background = new THREE.Color(0x000000); 
 
-    // Yıldızlar (Parçacıklar) Oluşturma
+    
     for (let i = 0; i < particleCount * 3; i += 3) {
         positions[i] = (Math.random() - 0.5) * 1000;
         positions[i + 1] = (Math.random() - 0.5) * 1000;
@@ -56,7 +56,7 @@ function init3D() {
     particles = new THREE.Points(geometry, material);
     scene.add(particles);
 
-    // Ortadaki Silik Resmi Ekle (husospace.png)
+    
     textureLoader.load(
         CENTER_IMAGE_URL, 
         (texture) => {
@@ -92,11 +92,11 @@ function init3D() {
 function animate() {
     requestAnimationFrame(animate);
 
-    // 1. İlerleyen Uzay Tüneli Efekti
+    
     if (particles) {
         const positionsArray = particles.geometry.attributes.position.array;
         for (let i = 2; i < positionsArray.length; i += 3) {
-            // ⭐ YENİ HIZ: 0.5
+            
             positionsArray[i] += 0.5; 
             if (positionsArray[i] > camera.position.z) {
                 positionsArray[i] -= 1000;
@@ -105,9 +105,9 @@ function animate() {
         particles.geometry.attributes.position.needsUpdate = true;
     }
 
-    // 2. Yemek İsimlerinin İleri Doğru Akışı
+    
      activeFoodSprites.forEach(sprite => {
-        // ⭐ YEMEK HIZI: 0.5
+        
         sprite.position.z += 0.5; 
         
         if (sprite.position.z > camera.position.z + 10) {
@@ -127,9 +127,7 @@ function onWindowResize() {
 }
 
 
-// --- 5. TIKLAMA VE GEÇİŞ FONKSİYONLARI ---
 
-// Aşama 1: "Hüsoya mı Yazar?" Belirme Animasyonu
 function animateTitle() {
     titleText.classList.remove('hidden');
     gsap.to(titleText, { 
@@ -143,27 +141,27 @@ function animateTitle() {
     });
 }
 
-// Aşama 2: İlk Tıklama Olayı (KONUM SABİT)
+
 function onFirstClick() {
     titleText.removeEventListener('click', onFirstClick);
     titleText.style.pointerEvents = 'none';
 
-    // 🛑 NİHAİ BAŞLIK HAREKET ENGELİ: Tüm transform verilerini sıfırla
+    
     gsap.set(titleText, { x: 0, y: 0, scale: 1, rotation: 0 }); 
 
-    // Başlık SADECE Opaklık ile kayboluyor. KONUM SABİT.
+   
     gsap.to(titleText, { 
         opacity: 0, 
         duration: 1.5, 
         delay: 0.5 
     });
 
-    // Ses çalma
+   
     sound.currentTime = 0;
     sound.play();
 
 
-    // "Keçiyi Besle" metnini gizle ve tıklama dinleyicisini başlat
+    
     besleText.classList.remove('hidden');
     gsap.to(besleText, { 
         opacity: 0, duration: 2, delay: 1.5,
@@ -175,20 +173,19 @@ function onFirstClick() {
 }
 
 
-// --- 6. 3D ETKİLEŞİM FONKSİYONLARI ---
 
-// Rastgele bir metin (Yemek veya Hüsoya Yazar) oluşturma fonksiyonu
+
 function createTextSprite(text, color = 'yellow', baseScaleX = 15, baseScaleY = 5) {
     const canvas = document.createElement('canvas');
     const context = canvas.getContext('2d');
     
-    // Metin boyutunu hesapla
+    
     const fontSize = 64; 
     context.font = `Bold ${fontSize}px Arial`;
     const textMetrics = context.measureText(text);
     const textWidth = textMetrics.width;
     
-    // Canvas boyutunu metne göre ayarla
+    
     const padding = 50; 
     const canvasWidth = textWidth + padding;
     const canvasHeight = 128;
@@ -196,7 +193,7 @@ function createTextSprite(text, color = 'yellow', baseScaleX = 15, baseScaleY = 
     canvas.width = canvasWidth;
     canvas.height = canvasHeight;
     
-    // Tekrar font ayarını yap ve metni çiz
+    
     context.font = `Bold ${fontSize}px Arial`;
     context.fillStyle = color;
     context.textAlign = 'center';
@@ -210,7 +207,7 @@ function createTextSprite(text, color = 'yellow', baseScaleX = 15, baseScaleY = 
     const scaleFactor = canvasWidth / 150; 
     sprite.scale.set(baseScaleX * scaleFactor, baseScaleY, 1); 
 
-    // ÇOK UZAKTA BAŞLATMA (Geniş dağılım)
+    
     sprite.position.set(
         (Math.random() - 0.5) * 100,
         (Math.random() - 0.5) * 100,
@@ -222,36 +219,34 @@ function createTextSprite(text, color = 'yellow', baseScaleX = 15, baseScaleY = 
 }
 
 
-// Sahneye Tıklama Olayı (Yemek İsimleri İçin)
+
 function onSceneClick(event) {
-    clickCount++; // Tıklama sayacını artır
+    clickCount++; 
 
-    // 1. Ses yok, sadece görsel efekt.
 
-    // 2. Rastgele Yemek İsmi Oluşturma
     const randomFood = foods[Math.floor(Math.random() * foods.length)];
-    // Varsayılan (Yemek) metnini oluştur
+    
     createTextSprite(randomFood, 'yellow', 15, 5); 
 
-    // 3. 5 ile 10 tıklama arasında rastgele "Hüsoya Yazar" yazısı ekle
+    
     const minClicks = 5;
     const maxClicks = 10;
     const shouldAddHuso = (clickCount >= minClicks) && (Math.random() < 0.3); 
 
     if (shouldAddHuso) {
-        // Hüsoya Yazar için daha büyük bir ölçek ver
+        
         createTextSprite("Hüsoya Yazar", 'cyan', 25, 8); 
         clickCount = 0; // Sayacı sıfırla
     }
 }
 
 
-// Mouse Kaçırma Mantığı (Pasif)
+
 function onMouseMove2D(e) {
-    // Bu kısım pasif kalır
+    
 }
 
 
-// Her şeyi başlat
+
 init3D();
 animate();
