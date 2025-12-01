@@ -96,10 +96,11 @@ function animateTitle() {
         duration: 3, 
         ease: "linear",
         onComplete: () => {
-             
+             // Animasyon bittikten sonra 4 saniye bekle
              setTimeout(() => {
                 const introTitleSprite = scene.getObjectByName("introTitle");
                 scene.remove(introTitleSprite);
+                // ⭐ TEK TIKLAMA GÜVENLİĞİ: Sadece bekleme bittikten sonra yemek fırlatma dinleyicisini ekle
                 renderer.domElement.addEventListener('click', onSceneClick); 
              }, 4000); 
         }
@@ -112,40 +113,26 @@ function animateTitle() {
         ease: "linear"
     });
     
-
-    renderer.domElement.addEventListener('click', onEarlyIntroClick);
+    // Erken tıklama dinleyicisi tamamen kaldırıldı.
 }
 
-function onEarlyIntroClick(event) {
-    const introTitleSprite = scene.getObjectByName("introTitle");
 
-    if (introTitleSprite) {
-        
-        gsap.killTweensOf(introTitleSprite.position);
-        gsap.killTweensOf(introTitleSprite.scale);
-        
-        renderer.domElement.removeEventListener('click', onEarlyIntroClick);
-        
-
-        gsap.to(introTitleSprite.position, {
-            z: camera.position.z + 50,
-            duration: 0.5,
-            ease: "power1.in",
-            onComplete: () => {
-                scene.remove(introTitleSprite);
-            }
-        });
+// onEarlyIntroClick fonksiyonu tamamen kaldırıldı.
 
 
-        besleText.classList.remove('hidden');
-        gsap.to(besleText, { 
-            opacity: 0, 
-            duration: 0.1,
-            onComplete: () => {
-                 besleText.style.display = 'none';
-                 renderer.domElement.addEventListener('click', onSceneClick);
-            }
-        });
+function onSceneClick(event) {
+    clickCount++; 
+
+    const randomFood = foods[Math.floor(Math.random() * foods.length)];
+    createTextSprite(randomFood, 'yellow', 15, 5, false); 
+
+    const minClicks = 5;
+    const maxClicks = 10;
+    const shouldAddHuso = (clickCount >= minClicks) && (Math.random() < 0.3); 
+
+    if (shouldAddHuso) {
+        createTextSprite("Hüsoya Yazar", 'cyan', 25, 8, false); 
+        clickCount = 0; 
     }
 }
 
@@ -162,7 +149,7 @@ function createTextSprite(text, color = 'white', baseScaleX = 15, baseScaleY = 5
     const fontSize = 64; 
     context.font = `Bold ${fontSize}px Arial`;
     const textMetrics = context.measureText(text);
-    const textWidth = textMetrics.width;
+    const textWidth = context.measureText(text).width;
     
     const padding = 50; 
     const canvasWidth = textWidth + padding;
@@ -199,23 +186,6 @@ function createTextSprite(text, color = 'white', baseScaleX = 15, baseScaleY = 5
     scene.add(sprite);
     activeFoodSprites.push(sprite);
     return sprite;
-}
-
-
-function onSceneClick(event) {
-    clickCount++; 
-
-    const randomFood = foods[Math.floor(Math.random() * foods.length)];
-    createTextSprite(randomFood, 'yellow', 15, 5, false); 
-
-    const minClicks = 5;
-    const maxClicks = 10;
-    const shouldAddHuso = (clickCount >= minClicks) && (Math.random() < 0.3); 
-
-    if (shouldAddHuso) {
-        createTextSprite("Hüsoya Yazar", 'cyan', 25, 8, false); 
-        clickCount = 0; 
-    }
 }
 
 
