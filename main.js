@@ -7,7 +7,7 @@ const foods = [
 let activeFoodSprites = []; 
 let clickCount = 0; 
 let particles; 
-const CURRENT_SPEED = 0.8; 
+const CURRENT_SPEED = 0.7; 
 const initialTitle = "Hüsoya mı Yazar?";
 
 const titleText = document.getElementById('title-text');
@@ -56,7 +56,7 @@ function animate() {
     if (particles) {
         const positionsArray = particles.geometry.attributes.position.array;
         for (let i = 2; i < positionsArray.length; i += 3) {
-            positionsArray[i] += 1.2; 
+            positionsArray[i] += CURRENT_SPEED; 
             if (positionsArray[i] > camera.position.z) {
                 positionsArray[i] -= 1000;
             }
@@ -65,7 +65,7 @@ function animate() {
     }
 
      activeFoodSprites.forEach(sprite => {
-        sprite.position.z += 1.2; 
+        sprite.position.z += CURRENT_SPEED; // 0.8 olarak güncellendi
         
         if (sprite.position.z > camera.position.z + 10) {
             scene.remove(sprite);
@@ -98,11 +98,11 @@ function animateTitle() {
         onComplete: () => {
 
              setTimeout(() => {
-                const introTitleSprite = scene.getObjectByName("introTitle");
-                scene.remove(introTitleSprite);
+                 const introTitleSprite = scene.getObjectByName("introTitle");
+                 scene.remove(introTitleSprite);
 
-                renderer.domElement.addEventListener('click', onSceneClick); 
-             }, 4000); 
+                 renderer.domElement.addEventListener('click', onSceneClick); 
+              }, 4000); 
         }
     });
     
@@ -113,12 +113,7 @@ function animateTitle() {
         ease: "linear"
     });
     
-    
 }
-
-
-
-
 
 function onSceneClick(event) {
     clickCount++; 
