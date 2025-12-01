@@ -1,9 +1,5 @@
-const CENTER_IMAGE_URL = "husospace.png"; 
-
-const images = [
-    "/kecihuso.jpg", "/huso1.png", "/malhusoo.gif", "/patapim.gif",
-    "/plane-memes.gif", "/husocicek.png", "/husosa.png"
-];
+// --- 1. SABİT TANIMLAMALAR ---
+// CENTER_IMAGE_URL ve images dizisi temizlendi, sadece foods kaldı.
 const foods = [
     "burger king benim ikilim", "burger king kral ikili", "komagene porsiyon çiğ köfte",
     "arbys", "1.5 adana iskender", "kremalı mantarlı kaşarlı tavuk",
@@ -15,18 +11,20 @@ let clickCount = 0;
 let particles; 
 
 
+// --- 2. DOM ELEMANLARI ---
 const titleText = document.getElementById('title-text');
 const besleText = document.getElementById('besle-text');
 const container = document.getElementById('container');
 const sound = document.getElementById("goatSound");
 sound.src = "BRUTA.mp3"; 
 
+// --- 3. THREE.JS VE 3D AYARLAR ---
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 const particleCount = 45000; 
 const positions = new Float32Array(particleCount * 3);
-const textureLoader = new THREE.TextureLoader();
+// textureLoader artık kullanılmıyor, kaldırıldı.
 
 
 function init3D() {
@@ -51,35 +49,7 @@ function init3D() {
     particles = new THREE.Points(geometry, material);
     scene.add(particles);
 
-    // Ortadaki Silik Resmi Ekle (husospace.png)
-    textureLoader.load(
-        CENTER_IMAGE_URL, 
-        (texture) => {
-            console.log(CENTER_IMAGE_URL + " BAŞARILI YÜKLENDİ.");
-            const material = new THREE.MeshBasicMaterial({
-                map: texture,
-                transparent: true,
-                opacity: 0.4, 
-                // YENİ DÜZELTME: Şeffaflık için
-                alphaTest: 0.01, 
-                side: THREE.DoubleSide
-            });
-            
-            const aspect = texture.image.width / texture.image.height;
-            const meshWidth = 80; 
-            const meshHeight = meshWidth / aspect;
-
-            const geometry = new THREE.PlaneGeometry(meshWidth, meshHeight);
-            const centerMesh = new THREE.Mesh(geometry, material);
-
-            centerMesh.position.set(0, 0, camera.position.z - 100); 
-            scene.add(centerMesh);
-        },
-        undefined, 
-        (error) => {
-            console.error("KRİTİK HATA: " + CENTER_IMAGE_URL + " yüklenemedi. Dosya yolunu veya adını kontrol edin!", error);
-        }
-    );
+    // Ortadaki Silik Resmi Ekleme Kodu Tamamen Kaldırıldı.
 
     animateTitle();
 
@@ -137,7 +107,6 @@ function onFirstClick() {
     titleText.removeEventListener('click', onFirstClick);
     titleText.style.pointerEvents = 'none';
 
-    // BAŞLIK HAREKET KONTROLÜ
     gsap.set(titleText, { x: 0, y: 0, scale: 1, rotation: 0 }); 
 
     gsap.to(titleText, { 
