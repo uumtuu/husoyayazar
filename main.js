@@ -7,11 +7,19 @@ const foods = [
 let activeFoodSprites = []; 
 let clickCount = 0; 
 let particles; 
-const CURRENT_SPEED = 0.7; 
+const CURRENT_SPEED = 0.5; 
+let autoTransitionTimeout; 
+let introSpriteRef = null; 
+
+let totalClicks = 0; 
+let gamePhase = 'INTRO'; 
+let specialClickCount = 0; 
+let sleepMessageSprite = null; 
+
 const initialTitle = "Hüsoya mı Yazar?";
 
 const titleText = document.getElementById('title-text');
-const besleText = document.getElementById('besle-text');
+const besleText = document.getElementById('besle_text');
 const container = document.getElementById('container');
 const sound = document.getElementById("goatSound");
 
@@ -51,7 +59,7 @@ function init3D() {
 }
 
 function animate() {
-    requestAnimationFrame(animate);
+    requestAnimationFrame(animate); 
 
     if (particles) {
         const positionsArray = particles.geometry.attributes.position.array;
@@ -65,16 +73,15 @@ function animate() {
     }
 
      activeFoodSprites.forEach(sprite => {
-        sprite.position.z += CURRENT_SPEED; // 0.8 olarak güncellendi
+        sprite.position.z += CURRENT_SPEED; 
         
         if (sprite.position.z > camera.position.z + 10) {
-            scene.remove(sprite);
+            scene.remove(sprite); 
             activeFoodSprites = activeFoodSprites.filter(s => s !== sprite);
         }
     });
 
-
-    renderer.render(scene, camera);
+    renderer.render(scene, camera); 
 }
 
 function onWindowResize() {
@@ -83,57 +90,136 @@ function onWindowResize() {
     renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
+function advanceToFoodPhase() {
+    gamePhase = 'FOOD'; 
+    
+    const introTitleSprite = scene.getObjectByName("introTitle");
+    
+    if (introTitleSprite) {
+        scene.remove(introTitleSprite);
+    }
+    
+    renderer.domElement.removeEventListener('click', onWaitingClick);
+    renderer.domElement.addEventListener('click', onSceneClick);
+}
 
 function animateTitle() {
     titleText.style.display = 'none';
 
-    const initialSprite = createTextSprite(initialTitle, 'white', 3, 1, true); 
-    initialSprite.name = "introTitle"; 
+    introSpriteRef = createTextSprite(initialTitle, 'white', 3, 1, true); 
+    introSpriteRef.name = "introTitle"; 
 
-
-    gsap.to(initialSprite.position, {
+    gsap.to(introSpriteRef.position, {
         z: camera.position.z - 200, 
         duration: 3, 
         ease: "linear",
         onComplete: () => {
-
-             setTimeout(() => {
-                 const introTitleSprite = scene.getObjectByName("introTitle");
-                 scene.remove(introTitleSprite);
-
-                 renderer.domElement.addEventListener('click', onSceneClick); 
-              }, 4000); 
+             autoTransitionTimeout = setTimeout(advanceToFoodPhase, 4000); 
+             
+             renderer.domElement.addEventListener('click', onWaitingClick);
         }
     });
     
-    gsap.to(initialSprite.scale, {
+    gsap.to(introSpriteRef.scale, {
         x: 30, 
         y: 10,
         duration: 3, 
         ease: "linear"
     });
-    
 }
 
+function onWaitingClick() {
+    clearTimeout(autoTransitionTimeout); 
+    advanceToFoodPhase();
+}
+
+
 function onSceneClick(event) {
+    if (gamePhase === 'AYI_UYUDU') return; 
+
     clickCount++; 
+    totalClicks++;
 
-    const randomFood = foods[Math.floor(Math.random() * foods.length)];
-    createTextSprite(randomFood, 'yellow', 15, 5, false); 
+    let phaseTransitioned = false; 
 
-    const minClicks = 5;
-    const maxClicks = 10;
-    const shouldAddHuso = (clickCount >= minClicks) && (Math.random() < 0.3); 
+    if (gamePhase === 'FOOD') {
+        if (totalClicks >= 50) {
+            gamePhase = 'AYI_UYUYACAK';
+            clickCount = 0; 
+            specialClickCount = 0; 
+            
+            activeFoodSprites.forEach(sprite => scene.remove(sprite));
+            activeFoodSprites = [];
+            
+            createTextSprite("AYI UYUYACAK MI", 'red', 40, 15, false);
+            phaseTransitioned = true; 
+        }
+    } 
+    
+    if (gamePhase === 'AYI_UYUYACAK' && !phaseTransitioned) {
+        specialClickCount++;
+        
+        if (specialClickCount === 15) {
+            activeFoodSprites.forEach(sprite => scene.remove(sprite));
+            activeFoodSprites = []; 
+        }
+        
+        if (specialClickCount >= 30) {
+            renderer.domElement.removeEventListener('click', onSceneClick);
+            
+            setTimeout(() => {
+                gamePhase = 'AYI_UYUDU';
+                
+                scene.background.set(0x000000); 
 
-    if (shouldAddHuso) {
-        createTextSprite("Hüsoya Yazar", 'cyan', 25, 8, false); 
-        clickCount = 0; 
+
+                sleepMessageSprite = createTextSprite("AYI UYUDU", 'white', 35, 12, 'fixed'); 
+                sleepMessageSprite.position.set(0, 0, camera.position.z - 50); 
+                sleepMessageSprite.material.opacity = 0.05; 
+                
+                specialClickCount = 0; 
+                renderer.domElement.addEventListener('click', onSleepClick);
+            }, 10); 
+            return; 
+        }
+    }
+    
+    if (!phaseTransitioned) {
+        const randomFood = foods[Math.floor(Math.random() * foods.length)];
+        createTextSprite(randomFood, 'yellow', 15, 5, false); 
+    
+        const minClicks = 5;
+        const maxClicks = 10;
+        const shouldAddHuso = (clickCount >= minClicks) && (Math.random() < 0.3); 
+    
+        if (shouldAddHuso) {
+            createTextSprite("Hüsoya Yazar", 'cyan', 25, 8, false); 
+            clickCount = 0; 
+        }
     }
 }
 
+function onSleepClick() {
+    if (gamePhase !== 'AYI_UYUDU') return;
 
-function onFirstClick() {
+    specialClickCount++; 
+
+    if (specialClickCount <= 30) {
+        const opacityStep = 1 / 30; 
+        
+        if (sleepMessageSprite && sleepMessageSprite.material.opacity < 1) {
+             sleepMessageSprite.material.opacity += opacityStep;
+             if (sleepMessageSprite.material.opacity > 1) {
+                 sleepMessageSprite.material.opacity = 1;
+             }
+        }
+    }
     
+    if (specialClickCount >= 30) {
+         if (sleepMessageSprite) {
+             sleepMessageSprite.material.opacity = 1;
+         }
+    }
 }
 
 
@@ -179,8 +265,16 @@ function createTextSprite(text, color = 'white', baseScaleX = 15, baseScaleY = 5
     }
     
     scene.add(sprite);
-    activeFoodSprites.push(sprite);
+    if (center !== 'fixed') {
+        activeFoodSprites.push(sprite);
+    }
+    
     return sprite;
+}
+
+
+function onFirstClick() {
+    
 }
 
 
