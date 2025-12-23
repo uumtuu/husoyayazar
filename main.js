@@ -2,60 +2,84 @@ const foods = [
     "burger king benim ikilim", "burger king kral ikili", "komagene porsiyon çiğ köfte",
     "arbys", "1.5 adana iskender", "kremalı mantarlı kaşarlı tavuk",
     "kiremitte konya tava", "tavuk incikten iskender", "kızartma bazlama + sucuklu yumurta",
-    "mangal söyledik knk et, tavuk ne varsa", "yulaf", "ballı yulaf"
+    "mangal söyledik knk et, tavuk ne varsa", "yulaf", "ballı yulaf",
+    "tavuklu pilav", "hatay dürüm", "bol malzemos", "ıslak hamburger"
 ];
-let activeFoodSprites = []; 
-let clickCount = 0; 
+
+const STAR_WARS_SPEED_Z = 0.5; 
+const STAR_WARS_SPEED_Y = 0.25; 
+const TEXT_TILT_ANGLE = -Math.PI / 3; 
+const SPAWN_INTERVAL_MS = 600; 
+
+let activeFoodMeshes = []; 
 let particles; 
-const CURRENT_SPEED = 0.5; 
-let autoTransitionTimeout; 
-let introSpriteRef = null; 
+let spawnInterval;
 
-let totalClicks = 0; 
-let gamePhase = 'INTRO'; 
-let specialClickCount = 0; 
-let sleepMessageSprite = null; 
-
-const initialTitle = "Hüsoya mı Yazar?";
-
-const titleText = document.getElementById('title-text');
-const besleText = document.getElementById('besle_text');
 const container = document.getElementById('container');
-const sound = document.getElementById("goatSound");
-
-
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+
 const particleCount = 45000; 
 const positions = new Float32Array(particleCount * 3);
-
 
 function init3D() {
     renderer.setSize(window.innerWidth, window.innerHeight);
     container.appendChild(renderer.domElement);
-    camera.position.z = 5;
-
+    
+    camera.position.set(0, 10, 60);
     scene.background = new THREE.Color(0x000000); 
 
+    const textureLoader = new THREE.TextureLoader();
+    
+    textureLoader.load('husospace.png', function(texture) {
+        
+        const imgAspect = texture.image.width / texture.image.height;
+        
+        const dist = 300; 
+        const vFOV = THREE.Math.degToRad(camera.fov); 
+        const visibleHeight = 2 * Math.tan(vFOV / 2) * dist;
+        
+        const scale = 1.2; 
+        
+        const geometry = new THREE.PlaneGeometry(visibleHeight * imgAspect * scale, visibleHeight * scale);
+        
+        const material = new THREE.MeshBasicMaterial({
+            map: texture,
+            transparent: true,
+            opacity: 1.0, 
+            blending: THREE.AdditiveBlending,
+            side: THREE.DoubleSide,
+            depthWrite: false
+        });
+
+        const bgMesh = new THREE.Mesh(geometry, material);
+        bgMesh.position.set(0, 20, -250); 
+        bgMesh.renderOrder = -1;
+        scene.add(bgMesh);
+
+    }, undefined, function(err) {
+        console.log("Resim yüklenemedi (Sorun yok, sadece yıldızlar görünecek).");
+    });
+
     for (let i = 0; i < particleCount * 3; i += 3) {
-        positions[i] = (Math.random() - 0.5) * 1000;
-        positions[i + 1] = (Math.random() - 0.5) * 1000;
-        positions[i + 2] = (Math.random() - 0.5) * 1000;
+        positions[i] = (Math.random() - 0.5) * 1500;
+        positions[i + 1] = (Math.random() - 0.5) * 1500;
+        positions[i + 2] = (Math.random() - 0.5) * 1500;
     }
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    const material = new THREE.PointsMaterial({
+    const starGeo = new THREE.BufferGeometry();
+    starGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const starMat = new THREE.PointsMaterial({
         color: 0xFFFFFF, 
-        size: 0.5,
+        size: 0.7,
         sizeAttenuation: true
     });
-    particles = new THREE.Points(geometry, material);
+    particles = new THREE.Points(starGeo, starMat);
     scene.add(particles);
 
-    animateTitle();
-
     window.addEventListener('resize', onWindowResize, false);
+    
+    startStarWarsFlow();
 }
 
 function animate() {
@@ -64,20 +88,24 @@ function animate() {
     if (particles) {
         const positionsArray = particles.geometry.attributes.position.array;
         for (let i = 2; i < positionsArray.length; i += 3) {
-            positionsArray[i] += CURRENT_SPEED; 
-            if (positionsArray[i] > camera.position.z) {
-                positionsArray[i] -= 1000;
+            positionsArray[i] += 0.3; 
+            if (positionsArray[i] > 500) {
+                positionsArray[i] -= 1500;
             }
         }
         particles.geometry.attributes.position.needsUpdate = true;
     }
 
-     activeFoodSprites.forEach(sprite => {
-        sprite.position.z += CURRENT_SPEED; 
-        
-        if (sprite.position.z > camera.position.z + 10) {
-            scene.remove(sprite); 
-            activeFoodSprites = activeFoodSprites.filter(s => s !== sprite);
+    activeFoodMeshes.forEach(mesh => {
+        mesh.position.z -= STAR_WARS_SPEED_Z; 
+        mesh.position.y += STAR_WARS_SPEED_Y;
+
+        if (mesh.position.z < -500) {
+            scene.remove(mesh); 
+            if(mesh.material.map) mesh.material.map.dispose();
+            if(mesh.material) mesh.material.dispose();
+            if(mesh.geometry) mesh.geometry.dispose();
+            activeFoodMeshes = activeFoodMeshes.filter(m => m !== mesh);
         }
     });
 
@@ -90,198 +118,73 @@ function onWindowResize() {
     renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
-function advanceToFoodPhase() {
-    gamePhase = 'FOOD'; 
-    
-    const introTitleSprite = scene.getObjectByName("introTitle");
-    
-    if (introTitleSprite) {
-        scene.remove(introTitleSprite);
-    }
-    
-    renderer.domElement.removeEventListener('click', onWaitingClick);
+function startStarWarsFlow() {
     renderer.domElement.addEventListener('click', onSceneClick);
+    spawnInterval = setInterval(() => {
+        spawnFoodRow();
+    }, SPAWN_INTERVAL_MS);
 }
 
-function animateTitle() {
-    titleText.style.display = 'none';
-
-    introSpriteRef = createTextSprite(initialTitle, 'white', 3, 1, true); 
-    introSpriteRef.name = "introTitle"; 
-
-    gsap.to(introSpriteRef.position, {
-        z: camera.position.z - 200, 
-        duration: 3, 
-        ease: "linear",
-        onComplete: () => {
-             autoTransitionTimeout = setTimeout(advanceToFoodPhase, 4000); 
-             
-             renderer.domElement.addEventListener('click', onWaitingClick);
-        }
-    });
+function spawnFoodRow() {
+    const randomVal = Math.random();
+    const shuffledFoods = [...foods].sort(() => 0.5 - Math.random());
     
-    gsap.to(introSpriteRef.scale, {
-        x: 30, 
-        y: 10,
-        duration: 3, 
-        ease: "linear"
-    });
+    if (randomVal > 0.4) {
+        createFoodMesh(shuffledFoods[0], 0); 
+    } else {
+        createFoodMesh(shuffledFoods[0], -40); 
+        createFoodMesh(shuffledFoods[1], 40);
+    }
 }
-
-function onWaitingClick() {
-    clearTimeout(autoTransitionTimeout); 
-    advanceToFoodPhase();
-}
-
 
 function onSceneClick(event) {
-    if (gamePhase === 'AYI_UYUDU') return; 
-
-    clickCount++; 
-    totalClicks++;
-
-    let phaseTransitioned = false; 
-
-    if (gamePhase === 'FOOD') {
-        if (totalClicks >= 50) {
-            gamePhase = 'AYI_UYUYACAK';
-            clickCount = 0; 
-            specialClickCount = 0; 
-            
-            activeFoodSprites.forEach(sprite => scene.remove(sprite));
-            activeFoodSprites = [];
-            
-            createTextSprite("AYI UYUYACAK MI", 'red', 40, 15, false);
-            phaseTransitioned = true; 
-        }
-    } 
-    
-    if (gamePhase === 'AYI_UYUYACAK' && !phaseTransitioned) {
-        specialClickCount++;
-        
-        if (specialClickCount === 15) {
-            activeFoodSprites.forEach(sprite => scene.remove(sprite));
-            activeFoodSprites = []; 
-        }
-        
-        if (specialClickCount >= 30) {
-            renderer.domElement.removeEventListener('click', onSceneClick);
-            
-            setTimeout(() => {
-                gamePhase = 'AYI_UYUDU';
-                
-                scene.background.set(0x000000); 
-
-
-                sleepMessageSprite = createTextSprite("AYI UYUDU", 'white', 35, 12, 'fixed'); 
-                sleepMessageSprite.position.set(0, 0, camera.position.z - 50); 
-                sleepMessageSprite.material.opacity = 0.05; 
-                
-                specialClickCount = 0; 
-                renderer.domElement.addEventListener('click', onSleepClick);
-            }, 10); 
-            return; 
-        }
-    }
-    
-    if (!phaseTransitioned) {
-        const randomFood = foods[Math.floor(Math.random() * foods.length)];
-        createTextSprite(randomFood, 'yellow', 15, 5, false); 
-    
-        const minClicks = 5;
-        const maxClicks = 10;
-        const shouldAddHuso = (clickCount >= minClicks) && (Math.random() < 0.3); 
-    
-        if (shouldAddHuso) {
-            createTextSprite("Hüsoya Yazar", 'cyan', 25, 8, false); 
-            clickCount = 0; 
-        }
-    }
+    spawnFoodRow(); 
 }
 
-function onSleepClick() {
-    if (gamePhase !== 'AYI_UYUDU') return;
-
-    specialClickCount++; 
-
-    if (specialClickCount <= 30) {
-        const opacityStep = 1 / 30; 
-        
-        if (sleepMessageSprite && sleepMessageSprite.material.opacity < 1) {
-             sleepMessageSprite.material.opacity += opacityStep;
-             if (sleepMessageSprite.material.opacity > 1) {
-                 sleepMessageSprite.material.opacity = 1;
-             }
-        }
-    }
-    
-    if (specialClickCount >= 30) {
-         if (sleepMessageSprite) {
-             sleepMessageSprite.material.opacity = 1;
-         }
-    }
-}
-
-
-function createTextSprite(text, color = 'white', baseScaleX = 15, baseScaleY = 5, center = false) {
+function createFoodMesh(text, xPos) {
     const canvas = document.createElement('canvas');
     const context = canvas.getContext('2d');
     
-    const fontSize = 64; 
+    const fontSize = 60; 
     context.font = `Bold ${fontSize}px Arial`;
     const textMetrics = context.measureText(text);
-    const textWidth = context.measureText(text).width;
-    
-    const padding = 50; 
-    const canvasWidth = textWidth + padding;
-    const canvasHeight = 128;
+    const canvasWidth = textMetrics.width + 40;
+    const canvasHeight = 100;
     
     canvas.width = canvasWidth;
     canvas.height = canvasHeight;
     
     context.font = `Bold ${fontSize}px Arial`;
-    context.fillStyle = color;
+    context.fillStyle = '#ffce00'; 
     context.textAlign = 'center';
     context.textBaseline = 'middle';
     context.fillText(text, canvas.width / 2, canvas.height / 2);
 
     const texture = new THREE.CanvasTexture(canvas);
-    const material = new THREE.SpriteMaterial({ map: texture, transparent: true, color: 0xFFFFFF });
-    const sprite = new THREE.Sprite(material);
-
-    const scaleFactor = canvasWidth / 150; 
-    sprite.scale.set(baseScaleX * scaleFactor, baseScaleY, 1); 
-
-    if (center) {
-        sprite.position.set(0, 0, camera.position.z - 500);
-        sprite.scale.set(3, 1, 1);
-        material.opacity = 1;
-    } else {
-        sprite.position.set(
-            (Math.random() - 0.5) * 100,
-            (Math.random() - 0.5) * 100,
-            camera.position.z - 100 
-        );
-    }
+    texture.minFilter = THREE.LinearFilter;
     
-    scene.add(sprite);
-    if (center !== 'fixed') {
-        activeFoodSprites.push(sprite);
-    }
+    const planeWidth = canvasWidth / 15; 
+    const planeHeight = canvasHeight / 15;
     
-    return sprite;
+    const geometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
+    const material = new THREE.MeshBasicMaterial({ 
+        map: texture, 
+        transparent: true, 
+        side: THREE.DoubleSide 
+    });
+    
+    const mesh = new THREE.Mesh(geometry, material);
+
+    const randomZOffset = Math.random() * 20; 
+
+    mesh.position.set(xPos, -30, 40 + randomZOffset);
+    mesh.rotation.x = TEXT_TILT_ANGLE; 
+
+    scene.add(mesh);
+    activeFoodMeshes.push(mesh);
+    
+    return mesh;
 }
-
-
-function onFirstClick() {
-    
-}
-
-
-function onMouseMove2D(e) {
-    
-}
-
 
 init3D();
 animate();
