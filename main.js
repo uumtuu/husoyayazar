@@ -20,6 +20,8 @@ const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 
+renderer.sortObjects = true;
+
 const particleCount = 45000; 
 const positions = new Float32Array(particleCount * 3);
 
@@ -34,26 +36,26 @@ function init3D() {
     
     textureLoader.load('husospace.png', function(texture) {
         const imgAspect = texture.image.width / texture.image.height;
-        const dist = 1500; 
+        const dist = 1000; 
         const vFOV = THREE.Math.degToRad(camera.fov); 
         const visibleHeight = 2 * Math.tan(vFOV / 2) * dist;
-        const scale = 1.2; 
+        const scale = 1.0; 
         
         const geometry = new THREE.PlaneGeometry(visibleHeight * imgAspect * scale, visibleHeight * scale);
         
         const material = new THREE.MeshBasicMaterial({
             map: texture,
             transparent: true,
-            opacity: 0.9, 
-            blending: THREE.AdditiveBlending,
+            opacity: 0.5, 
             side: THREE.DoubleSide,
-            depthTest: false,
+            depthTest: true,
             depthWrite: false
         });
 
         const bgMesh = new THREE.Mesh(geometry, material);
         bgMesh.position.set(0, 0, -dist); 
-        bgMesh.renderOrder = -10; 
+        bgMesh.renderOrder = -999; 
+        
         scene.add(bgMesh);
     });
 
@@ -67,10 +69,12 @@ function init3D() {
     const starMat = new THREE.PointsMaterial({
         color: 0xFFFFFF, 
         size: 0.7,
-        sizeAttenuation: true
+        sizeAttenuation: true,
+        transparent: true,
+        opacity: 0.8
     });
     particles = new THREE.Points(starGeo, starMat);
-    particles.renderOrder = -5;
+    particles.position.z = -100;
     scene.add(particles);
 
     window.addEventListener('resize', onWindowResize, false);
@@ -166,7 +170,9 @@ function createFoodMesh(text, xPos) {
     const material = new THREE.MeshBasicMaterial({ 
         map: texture, 
         transparent: true, 
-        side: THREE.DoubleSide 
+        side: THREE.DoubleSide,
+        depthTest: true,
+        depthWrite: true
     });
     
     const mesh = new THREE.Mesh(geometry, material);
@@ -175,7 +181,6 @@ function createFoodMesh(text, xPos) {
 
     mesh.position.set(xPos, -30, 40 + randomZOffset);
     mesh.rotation.x = TEXT_TILT_ANGLE; 
-    mesh.renderOrder = 1; 
 
     scene.add(mesh);
     activeFoodMeshes.push(mesh);
