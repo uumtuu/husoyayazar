@@ -33,13 +33,10 @@ function init3D() {
     const textureLoader = new THREE.TextureLoader();
     
     textureLoader.load('husospace.png', function(texture) {
-        
         const imgAspect = texture.image.width / texture.image.height;
-        
-        const dist = 300; 
+        const dist = 1500; 
         const vFOV = THREE.Math.degToRad(camera.fov); 
         const visibleHeight = 2 * Math.tan(vFOV / 2) * dist;
-        
         const scale = 1.2; 
         
         const geometry = new THREE.PlaneGeometry(visibleHeight * imgAspect * scale, visibleHeight * scale);
@@ -47,25 +44,23 @@ function init3D() {
         const material = new THREE.MeshBasicMaterial({
             map: texture,
             transparent: true,
-            opacity: 1.0, 
+            opacity: 0.9, 
             blending: THREE.AdditiveBlending,
             side: THREE.DoubleSide,
+            depthTest: false,
             depthWrite: false
         });
 
         const bgMesh = new THREE.Mesh(geometry, material);
-        bgMesh.position.set(0, 20, -250); 
-        bgMesh.renderOrder = -1;
+        bgMesh.position.set(0, 0, -dist); 
+        bgMesh.renderOrder = -10; 
         scene.add(bgMesh);
-
-    }, undefined, function(err) {
-        console.log("Resim yüklenemedi (Sorun yok, sadece yıldızlar görünecek).");
     });
 
     for (let i = 0; i < particleCount * 3; i += 3) {
-        positions[i] = (Math.random() - 0.5) * 1500;
-        positions[i + 1] = (Math.random() - 0.5) * 1500;
-        positions[i + 2] = (Math.random() - 0.5) * 1500;
+        positions[i] = (Math.random() - 0.5) * 2000;
+        positions[i + 1] = (Math.random() - 0.5) * 2000;
+        positions[i + 2] = (Math.random() - 0.5) * 2000;
     }
     const starGeo = new THREE.BufferGeometry();
     starGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -75,6 +70,7 @@ function init3D() {
         sizeAttenuation: true
     });
     particles = new THREE.Points(starGeo, starMat);
+    particles.renderOrder = -5;
     scene.add(particles);
 
     window.addEventListener('resize', onWindowResize, false);
@@ -88,9 +84,9 @@ function animate() {
     if (particles) {
         const positionsArray = particles.geometry.attributes.position.array;
         for (let i = 2; i < positionsArray.length; i += 3) {
-            positionsArray[i] += 0.3; 
+            positionsArray[i] += 0.5; 
             if (positionsArray[i] > 500) {
-                positionsArray[i] -= 1500;
+                positionsArray[i] -= 2000;
             }
         }
         particles.geometry.attributes.position.needsUpdate = true;
@@ -100,7 +96,7 @@ function animate() {
         mesh.position.z -= STAR_WARS_SPEED_Z; 
         mesh.position.y += STAR_WARS_SPEED_Y;
 
-        if (mesh.position.z < -500) {
+        if (mesh.position.z < -600) {
             scene.remove(mesh); 
             if(mesh.material.map) mesh.material.map.dispose();
             if(mesh.material) mesh.material.dispose();
@@ -179,6 +175,7 @@ function createFoodMesh(text, xPos) {
 
     mesh.position.set(xPos, -30, 40 + randomZOffset);
     mesh.rotation.x = TEXT_TILT_ANGLE; 
+    mesh.renderOrder = 1; 
 
     scene.add(mesh);
     activeFoodMeshes.push(mesh);
