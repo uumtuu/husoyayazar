@@ -32,23 +32,39 @@ const MOUSE_MOVE_THRESHOLD = 5;
 
 let audioContext;
 let humSound;
-let isRightClick = false; 
+let isRightClick = false;
 
-const container = document.getElementById('container');
-const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
-const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+let container;
+let scene;
+let camera;
+let renderer;
 
 const particleCount = 45000; 
 const positions = new Float32Array(particleCount * 3);
-const colors = new Float32Array(particleCount * 3); 
+const colors = new Float32Array(particleCount * 3);
 
 function init3D() {
+    container = document.getElementById('container');
+    
+    if (!container) {
+        console.error('Container element not found!');
+        return;
+    }
+    
+    console.log('Initializing 3D scene...');
+    
+    scene = new THREE.Scene();
+    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    
     renderer.setSize(window.innerWidth, window.innerHeight);
     container.appendChild(renderer.domElement);
     
+    console.log('Renderer attached to container');
+    
     camera.position.set(0, 10, 60);
     scene.background = new THREE.Color(0x000000); 
+
     for (let i = 0; i < particleCount * 3; i += 3) {
         positions[i] = (Math.random() - 0.5) * 2000;
         positions[i + 1] = (Math.random() - 0.5) * 2000;
@@ -68,13 +84,12 @@ function init3D() {
         sizeAttenuation: true,
         transparent: true,
         opacity: 0.8,
-        vertexColors: true 
+        vertexColors: true
     });
     particles = new THREE.Points(starGeo, starMat);
     scene.add(particles);
 
     createAccretionDisk();
-    
     initAudio();
 
     window.addEventListener('resize', onWindowResize, false);
@@ -217,6 +232,7 @@ function triggerSuperBlackHole() {
     blackHoleFoodSize = MAX_BLACKHOLE_SIZE * 2.5;
     
     playHumSound(1);
+    
     setTimeout(() => {
         const interval = setInterval(() => {
             blackHoleSize = Math.max(80, blackHoleSize - 20);
@@ -284,7 +300,6 @@ function animate() {
             positionsArray[i + 2] += 0.5; 
             if (positionsArray[i + 2] > 500) {
                 positionsArray[i + 2] -= 2000;
-
                 colorsArray[i] = 1;
                 colorsArray[i + 1] = 1;
                 colorsArray[i + 2] = 1;
@@ -529,5 +544,18 @@ function createFoodMesh(text, xPos) {
     return mesh;
 }
 
-init3D();
-animate();
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+        console.log('DOM ready, starting 3D...');
+        init3D();
+        animate();
+    });
+} else {
+    console.log('DOM already ready, starting 3D...');
+    init3D();
+    animate();
+}
+
+window.addEventListener('error', (e) => {
+    console.error('Global error:', e.message, e.filename, e.lineno);
+});
