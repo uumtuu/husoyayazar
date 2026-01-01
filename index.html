@@ -31,9 +31,8 @@ let lastMoveTime = 0;
 let blackHoleSize = 15;
 let audioContext, humSound, isRightClick = false;
 
-// Ayarlar - KÜÇÜK çekim alanı
-const MIN_BLACKHOLE_SIZE = 15;   // Başlangıç çok küçük
-const MAX_BLACKHOLE_SIZE = 80;   // Max da küçük - sadece mouse etrafı
+const MIN_BLACKHOLE_SIZE = 15;   
+const MAX_BLACKHOLE_SIZE = 80;   
 const GROWTH_SPEED = 0.4;
 const MOUSE_MOVE_THRESHOLD = 2;
 
@@ -219,7 +218,6 @@ function animate() {
         }
     }
 
-    // Enerji partikülleri
     for (let i = energyParticles.length - 1; i >= 0; i--) {
         const p = energyParticles[i];
         p.position.add(p.velocity); 
@@ -234,7 +232,6 @@ function animate() {
         }
     }
 
-    // Yıldız hareketi
     if (particles) {
         const pos = particles.geometry.attributes.position.array;
         const time = Date.now() * 0.0001;
@@ -258,7 +255,6 @@ function animate() {
                 const dy = y - mouseWorld.y;
                 const dist = Math.sqrt(dx * dx + dy * dy);
                 
-                // Sadece küçük alan içinde çekim
                 if (dist < blackHoleSize && dist > 0.1) {
                     const normalizedDist = dist / blackHoleSize;
                     const pullStrength = easeOutCubic(1 - normalizedDist);
@@ -306,7 +302,6 @@ function animate() {
             const dy = m.position.y - mouseWorld.y;
             const dist = Math.sqrt(dx * dx + dy * dy);
             
-            // Sadece küçük alan içinde çekim
             if (dist < foodBlackholeSize && dist > 0.1) {
                 const normalizedDist = dist / foodBlackholeSize;
                 const pullStrength = easeOutCubic(1 - normalizedDist);
@@ -348,7 +343,6 @@ function animate() {
                     }
                 }
             } else if (m.userData.captured) {
-                // Yakalanmış ama alan dışına çıktı - geri çek
                 const pullBack = 0.8;
                 m.position.x -= (dx / dist) * pullBack;
                 m.position.y -= (dy / dist) * pullBack;
@@ -413,3 +407,4 @@ animate();
     </script>
 </body>
 </html>
+
