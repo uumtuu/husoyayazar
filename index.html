@@ -3,36 +3,413 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>HÜSOYA YAZAR </title>
-
+    <title>Hüsoya Yazar</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            overflow: hidden;
-            background-color: #000;
-            cursor: default;
-        }
-
-        #container {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            z-index: 1;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { overflow: hidden; background-color: #000; }
+        #container { position: fixed; top: 0; left: 0; width: 100%; height: 100%; }
     </style>
 </head>
 <body>
     <div id="container"></div>
-
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="main.js"></script>
+    <script>
+const foods = [
+    "burger king benim ikilim", "burger king kral ikili", "komagene porsiyon çiğ köfte",
+    "arbys", "1.5 adana iskender", "kremalı mantarlı kaşarlı tavuk",
+    "kiremitte konya tava", "tavuk incikten iskender", "kızartma bazlama + sucuklu yumurta",
+    "mangal söyledik knk et, tavuk ne varsa", "yulaf", "ballı yulaf",
+    "tavuklu pilav", "hatay dürüm", "bol malzemos", "ıslak hamburger"
+];
+
+let scene, camera, renderer, particles, energyParticles = [], activeFoodMeshes = [];
+let mouseNDC = new THREE.Vector2(0, 0);
+let isMouseInWindow = false;
+let mouseStillTime = 0;
+let lastMouseX = -999, lastMouseY = -999;
+let lastMoveTime = 0;
+let blackHoleSize = 15;
+let audioContext, humSound, isRightClick = false;
+
+// Ayarlar - KÜÇÜK çekim alanı
+const MIN_BLACKHOLE_SIZE = 15;   // Başlangıç çok küçük
+const MAX_BLACKHOLE_SIZE = 80;   // Max da küçük - sadece mouse etrafı
+const GROWTH_SPEED = 0.4;
+const MOUSE_MOVE_THRESHOLD = 2;
+
+const STAR_WARS_SPEED_Z = 0.5, STAR_WARS_SPEED_Y = 0.25, TEXT_TILT_ANGLE = -Math.PI / 3;
+const particleCount = 45000;
+const positions = new Float32Array(particleCount * 3);
+
+function init() {
+    scene = new THREE.Scene();
+    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.getElementById('container').appendChild(renderer.domElement);
+    
+    camera.position.set(0, 10, 60);
+    scene.background = new THREE.Color(0x000000);
+
+    for (let i = 0; i < particleCount * 3; i += 3) {
+        positions[i] = (Math.random() - 0.5) * 2000;
+        positions[i + 1] = (Math.random() - 0.5) * 2000;
+        positions[i + 2] = (Math.random() - 0.5) * 2000;
+    }
+    
+    const starGeo = new THREE.BufferGeometry();
+    starGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const starMat = new THREE.PointsMaterial({ 
+        color: 0xFFFFFF,
+        size: 0.7, 
+        sizeAttenuation: true, 
+        transparent: true, 
+        opacity: 0.8
+    });
+    particles = new THREE.Points(starGeo, starMat);
+    scene.add(particles);
+
+    try { audioContext = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
+
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+    
+    document.body.addEventListener('mousemove', (e) => {
+        isMouseInWindow = true;
+        
+        const dx = Math.abs(e.clientX - lastMouseX);
+        const dy = Math.abs(e.clientY - lastMouseY);
+        
+        if (dx > MOUSE_MOVE_THRESHOLD || dy > MOUSE_MOVE_THRESHOLD) {
+            lastMoveTime = Date.now();
+            mouseStillTime = 0;
+            blackHoleSize = Math.max(MIN_BLACKHOLE_SIZE, blackHoleSize * 0.95);
+        }
+        
+        lastMouseX = e.clientX;
+        lastMouseY = e.clientY;
+        
+        mouseNDC.x = (e.clientX / window.innerWidth) * 2 - 1;
+        mouseNDC.y = -(e.clientY / window.innerHeight) * 2 + 1;
+    });
+    
+    document.body.addEventListener('mouseenter', () => { 
+        isMouseInWindow = true;
+        blackHoleSize = MIN_BLACKHOLE_SIZE;
+    });
+    
+    document.body.addEventListener('mouseleave', () => { 
+        isMouseInWindow = false; 
+        mouseStillTime = 0; 
+        blackHoleSize = MIN_BLACKHOLE_SIZE; 
+    });
+    
+    document.body.addEventListener('contextmenu', (e) => { 
+        e.preventDefault(); 
+        isRightClick = true; 
+        setTimeout(() => isRightClick = false, 100); 
+    });
+    
+    document.body.addEventListener('keydown', (e) => { 
+        if(e.code === 'Space') { 
+            e.preventDefault(); 
+            triggerSuper(); 
+        } 
+    });
+    
+    renderer.domElement.addEventListener('click', spawnFoodRow);
+    setInterval(spawnFoodRow, 600);
+}
+
+function playSound(type, intensity = 0.5) {
+    if (!audioContext) return;
+    try {
+        if (type === 'hum' && humSound) try { humSound.stop(); } catch(e) {}
+        const osc = audioContext.createOscillator(), gain = audioContext.createGain();
+        if (type === 'hum') { 
+            osc.type = 'sine'; 
+            osc.frequency.setValueAtTime(50 + intensity * 100, audioContext.currentTime); 
+            gain.gain.setValueAtTime(0, audioContext.currentTime); 
+            gain.gain.linearRampToValueAtTime(intensity * 0.08, audioContext.currentTime + 0.1); 
+            gain.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.3); 
+            humSound = osc; 
+        }
+        else if (type === 'swoosh') { 
+            osc.type = 'sawtooth'; 
+            osc.frequency.setValueAtTime(800, audioContext.currentTime); 
+            osc.frequency.exponentialRampToValueAtTime(200, audioContext.currentTime + 0.2); 
+            gain.gain.setValueAtTime(0.03, audioContext.currentTime); 
+            gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2); 
+        }
+        else if (type === 'gulp') { 
+            osc.type = 'triangle'; 
+            osc.frequency.setValueAtTime(400, audioContext.currentTime); 
+            osc.frequency.exponentialRampToValueAtTime(100, audioContext.currentTime + 0.15); 
+            gain.gain.setValueAtTime(0.08, audioContext.currentTime); 
+            gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.15); 
+        }
+        osc.connect(gain); 
+        gain.connect(audioContext.destination); 
+        osc.start(); 
+        osc.stop(audioContext.currentTime + 0.3);
+    } catch(e) {}
+}
+
+function createEnergyParticle(x, y, z) {
+    const geo = new THREE.SphereGeometry(0.5, 8, 8);
+    const mat = new THREE.MeshBasicMaterial({ 
+        color: 0xFFFFFF,
+        transparent: true, 
+        blending: THREE.AdditiveBlending 
+    });
+    const p = new THREE.Mesh(geo, mat);
+    p.position.set(x, y, z);
+    p.velocity = new THREE.Vector3(
+        (Math.random() - 0.5) * 0.3, 
+        (Math.random() - 0.5) * 0.3, 
+        (Math.random() - 0.5) * 0.3
+    );
+    p.life = 1;
+    scene.add(p); 
+    energyParticles.push(p);
+}
+
+function triggerSuper() {
+    blackHoleSize = MAX_BLACKHOLE_SIZE * 3; 
+    playSound('hum', 1);
+    setTimeout(() => {
+        const iv = setInterval(() => {
+            blackHoleSize = Math.max(MIN_BLACKHOLE_SIZE, blackHoleSize - 5);
+            if (blackHoleSize <= MIN_BLACKHOLE_SIZE) clearInterval(iv);
+        }, 50);
+    }, 3000);
+}
+
+function screenToWorld(ndcX, ndcY, targetZ) {
+    const vec = new THREE.Vector3(ndcX, ndcY, 0.5);
+    vec.unproject(camera);
+    const dir = vec.sub(camera.position).normalize();
+    const t = (targetZ - camera.position.z) / dir.z;
+    return camera.position.clone().add(dir.multiplyScalar(t));
+}
+
+function easeOutCubic(t) {
+    return 1 - Math.pow(1 - t, 3);
+}
+
+function animate() {
+    requestAnimationFrame(animate);
+    
+    if (isMouseInWindow) {
+        const timeSinceMove = Date.now() - lastMoveTime;
+        
+        if (timeSinceMove > 150) {
+            mouseStillTime += 1/60;
+            
+            const oldSize = blackHoleSize;
+            blackHoleSize = Math.min(MAX_BLACKHOLE_SIZE, blackHoleSize + GROWTH_SPEED);
+            
+            if (Math.floor(oldSize / 20) < Math.floor(blackHoleSize / 20)) {
+                playSound('hum', blackHoleSize / MAX_BLACKHOLE_SIZE);
+            }
+        }
+    }
+
+    // Enerji partikülleri
+    for (let i = energyParticles.length - 1; i >= 0; i--) {
+        const p = energyParticles[i];
+        p.position.add(p.velocity); 
+        p.life -= 0.02; 
+        p.material.opacity = p.life; 
+        p.scale.setScalar(1 + (1 - p.life));
+        if (p.life <= 0) { 
+            scene.remove(p); 
+            p.geometry.dispose(); 
+            p.material.dispose(); 
+            energyParticles.splice(i, 1); 
+        }
+    }
+
+    // Yıldız hareketi
+    if (particles) {
+        const pos = particles.geometry.attributes.position.array;
+        const time = Date.now() * 0.0001;
+        
+        for (let i = 0; i < pos.length; i += 3) {
+            let x = pos[i];
+            let y = pos[i + 1];
+            let z = pos[i + 2];
+            
+            z += STAR_WARS_SPEED_Z;
+            if (z > 500) {
+                z -= 2000;
+                x = (Math.random() - 0.5) * 2000;
+                y = (Math.random() - 0.5) * 2000;
+            }
+            
+            if (isMouseInWindow && blackHoleSize > 1) {
+                const mouseWorld = screenToWorld(mouseNDC.x, mouseNDC.y, z);
+                
+                const dx = x - mouseWorld.x;
+                const dy = y - mouseWorld.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                
+                // Sadece küçük alan içinde çekim
+                if (dist < blackHoleSize && dist > 0.1) {
+                    const normalizedDist = dist / blackHoleSize;
+                    const pullStrength = easeOutCubic(1 - normalizedDist);
+                    const sizeMultiplier = blackHoleSize / MAX_BLACKHOLE_SIZE;
+                    
+                    if (isRightClick) {
+                        const push = pullStrength * sizeMultiplier * 3;
+                        x += (dx / dist) * push; 
+                        y += (dy / dist) * push;
+                    } else {
+                        const force = pullStrength * sizeMultiplier * 2.5;
+                        const angle = Math.atan2(dy, dx);
+                        const spiralAmount = pullStrength * 0.5;
+                        const spiral = angle + time * 2.5 * spiralAmount;
+                        
+                        x -= Math.cos(spiral) * force; 
+                        y -= Math.sin(spiral) * force;
+                        
+                        if (dist < blackHoleSize * 0.1 && Math.random() < 0.01 * sizeMultiplier) { 
+                            createEnergyParticle(x, y, z); 
+                            playSound('swoosh'); 
+                        }
+                    }
+                }
+            }
+            
+            pos[i] = x;
+            pos[i + 1] = y;
+            pos[i + 2] = z;
+        }
+        particles.geometry.attributes.position.needsUpdate = true;
+    }
+
+    // Yemek yazıları
+    const foodBlackholeSize = blackHoleSize * 1.2;
+    
+    activeFoodMeshes.forEach(m => {
+        let baseSpeedZ = STAR_WARS_SPEED_Z;
+        let baseSpeedY = STAR_WARS_SPEED_Y;
+        
+        if (isMouseInWindow && blackHoleSize > 1) {
+            const mouseWorld = screenToWorld(mouseNDC.x, mouseNDC.y, m.position.z);
+            
+            const dx = m.position.x - mouseWorld.x;
+            const dy = m.position.y - mouseWorld.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            
+            // Sadece küçük alan içinde çekim
+            if (dist < foodBlackholeSize && dist > 0.1) {
+                const normalizedDist = dist / foodBlackholeSize;
+                const pullStrength = easeOutCubic(1 - normalizedDist);
+                const sizeMultiplier = blackHoleSize / MAX_BLACKHOLE_SIZE;
+                
+                if (!m.userData.captured && pullStrength > 0.2) {
+                    m.userData.captured = true;
+                }
+                
+                if (isRightClick) { 
+                    const push = pullStrength * sizeMultiplier * 2.5; 
+                    m.position.x += (dx / dist) * push; 
+                    m.position.y += (dy / dist) * push; 
+                }
+                else {
+                    const force = pullStrength * sizeMultiplier * 2;
+                    m.position.x -= (dx / dist) * force; 
+                    m.position.y -= (dy / dist) * force;
+                    
+                    if (m.userData.captured) {
+                        baseSpeedZ *= (1 - pullStrength * 0.95);
+                        baseSpeedY *= (1 - pullStrength * 0.95);
+                    }
+                    
+                    m.rotation.z += pullStrength * 0.025 * sizeMultiplier; 
+                    
+                    if (dist < foodBlackholeSize * 0.08) {
+                        for (let j = 0; j < 5; j++) {
+                            createEnergyParticle(m.position.x, m.position.y, m.position.z);
+                        }
+                        playSound('gulp');
+                        
+                        scene.remove(m);
+                        if(m.material.map) m.material.map.dispose();
+                        if(m.material) m.material.dispose();
+                        if(m.geometry) m.geometry.dispose();
+                        activeFoodMeshes = activeFoodMeshes.filter(x => x !== m);
+                        return;
+                    }
+                }
+            } else if (m.userData.captured) {
+                // Yakalanmış ama alan dışına çıktı - geri çek
+                const pullBack = 0.8;
+                m.position.x -= (dx / dist) * pullBack;
+                m.position.y -= (dy / dist) * pullBack;
+                baseSpeedZ *= 0.2;
+                baseSpeedY *= 0.2;
+            }
+        }
+        
+        m.position.z -= baseSpeedZ; 
+        m.position.y += baseSpeedY;
+        
+        if (m.position.z < -600) {
+            scene.remove(m);
+            if(m.material.map) m.material.map.dispose();
+            if(m.material) m.material.dispose();
+            if(m.geometry) m.geometry.dispose();
+            activeFoodMeshes = activeFoodMeshes.filter(x => x !== m);
+        }
+    });
+
+    renderer.render(scene, camera);
+}
+
+function spawnFoodRow() {
+    const shuffled = [...foods].sort(() => 0.5 - Math.random());
+    if (Math.random() > 0.4) createFood(shuffled[0], 0);
+    else { createFood(shuffled[0], -40); createFood(shuffled[1], 40); }
+}
+
+function createFood(text, xPos) {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const fontSize = 60;
+    ctx.font = `Bold ${fontSize}px Arial`;
+    const w = ctx.measureText(text).width + 40;
+    const h = 100;
+    canvas.width = w; 
+    canvas.height = h;
+    ctx.font = `Bold ${fontSize}px Arial`;
+    ctx.fillStyle = '#ffce00'; 
+    ctx.textAlign = 'center'; 
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, w / 2, h / 2);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.minFilter = THREE.LinearFilter;
+    const geo = new THREE.PlaneGeometry(w / 15, h / 15);
+    const mat = new THREE.MeshBasicMaterial({ 
+        map: tex, 
+        transparent: true, 
+        side: THREE.DoubleSide 
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(xPos, -30, 40 + Math.random() * 20);
+    mesh.rotation.x = TEXT_TILT_ANGLE;
+    mesh.userData.captured = false;
+    scene.add(mesh); 
+    activeFoodMeshes.push(mesh);
+}
+
+init();
+animate();
+    </script>
 </body>
 </html>
-
