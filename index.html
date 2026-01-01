@@ -3,10 +3,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Hüsoya Yazar</title>
-
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.9.1/gsap.min.js"></script>
+    <title>Cosmic Black Hole</title>
 
     <style>
         * {
@@ -31,6 +28,23 @@
             z-index: 1;
         }
 
+        #blackhole-cursor {
+            position: fixed;
+            width: 160px;
+            height: 160px;
+            border: 2px solid rgba(138, 43, 226, 0.6);
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 9999;
+            transform: translate(-50%, -50%);
+            box-shadow: 
+                0 0 20px rgba(138, 43, 226, 0.4),
+                0 0 40px rgba(138, 43, 226, 0.2),
+                inset 0 0 20px rgba(138, 43, 226, 0.3);
+            animation: pulse 2s ease-in-out infinite;
+            display: none;
+            transition: all 0.3s ease-out;
+        }
         
         @keyframes pulse {
             0%, 100% { 
@@ -46,10 +60,10 @@
 </head>
 <body>
     <div id="container"></div>
-    
     <div id="blackhole-cursor"></div>
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.9.1/gsap.min.js"></script>
     <script src="main.js"></script>
 </body>
 </html>
-
