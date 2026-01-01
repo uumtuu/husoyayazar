@@ -14,10 +14,9 @@ const SPAWN_INTERVAL_MS = 600;
 let activeFoodMeshes = []; 
 let particles; 
 let spawnInterval;
-let energyParticles = []; // Karadelik enerji partikülleri
-let accretionDisk; // Karadelik etrafındaki ışık halkası
+let energyParticles = [];
+let accretionDisk;
 
-// Karadelik efekti için
 let mouseX = 0;
 let mouseY = 0;
 let mouse3D = new THREE.Vector3();
@@ -31,10 +30,9 @@ const MAX_BLACKHOLE_SIZE = 800;
 const GROWTH_SPEED = 2;
 const MOUSE_MOVE_THRESHOLD = 5;
 
-// Ses efektleri
 let audioContext;
 let humSound;
-let isRightClick = false; // Anti-karadelik için
+let isRightClick = false; 
 
 const container = document.getElementById('container');
 const scene = new THREE.Scene();
@@ -43,7 +41,7 @@ const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 
 const particleCount = 45000; 
 const positions = new Float32Array(particleCount * 3);
-const colors = new Float32Array(particleCount * 3); // Renk değişimi için
+const colors = new Float32Array(particleCount * 3); 
 
 function init3D() {
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -51,14 +49,11 @@ function init3D() {
     
     camera.position.set(0, 10, 60);
     scene.background = new THREE.Color(0x000000); 
-
-    // Yıldızları oluştur - renkli
     for (let i = 0; i < particleCount * 3; i += 3) {
         positions[i] = (Math.random() - 0.5) * 2000;
         positions[i + 1] = (Math.random() - 0.5) * 2000;
         positions[i + 2] = (Math.random() - 0.5) * 2000;
         
-        // Başlangıç rengi beyaz
         colors[i] = 1;
         colors[i + 1] = 1;
         colors[i + 2] = 1;
@@ -73,15 +68,13 @@ function init3D() {
         sizeAttenuation: true,
         transparent: true,
         opacity: 0.8,
-        vertexColors: true // Renk değişimi aktif
+        vertexColors: true 
     });
     particles = new THREE.Points(starGeo, starMat);
     scene.add(particles);
 
-    // Accretion Disk (Karadelik ışık halkası) oluştur
     createAccretionDisk();
     
-    // Ses sistemini başlat
     initAudio();
 
     window.addEventListener('resize', onWindowResize, false);
@@ -94,14 +87,12 @@ function init3D() {
         blackHoleFoodSize = 100;
     });
     
-    // Sağ tık anti-karadelik
     window.addEventListener('contextmenu', (e) => {
         e.preventDefault();
         isRightClick = true;
         setTimeout(() => isRightClick = false, 100);
     });
     
-    // Space tuşu süper karadelik
     window.addEventListener('keydown', (e) => {
         if (e.code === 'Space') {
             triggerSuperBlackHole();
@@ -222,14 +213,10 @@ function createEnergyParticle(x, y, z) {
 }
 
 function triggerSuperBlackHole() {
-    // Tüm ekranı çek - 3 saniye boyunca
     blackHoleSize = MAX_BLACKHOLE_SIZE * 2;
     blackHoleFoodSize = MAX_BLACKHOLE_SIZE * 2.5;
     
-    // Ekstra güçlü ses
     playHumSound(1);
-    
-    // Yavaşça normale dön
     setTimeout(() => {
         const interval = setInterval(() => {
             blackHoleSize = Math.max(80, blackHoleSize - 20);
@@ -245,7 +232,6 @@ function triggerSuperBlackHole() {
 function animate() {
     requestAnimationFrame(animate); 
 
-    // KARADELIK BÜYÜMESI
     if (isMouseActive) {
         mouseStillTime += 1/60;
         
@@ -254,14 +240,12 @@ function animate() {
             blackHoleSize = Math.min(MAX_BLACKHOLE_SIZE, blackHoleSize + GROWTH_SPEED);
             blackHoleFoodSize = Math.min(MAX_BLACKHOLE_SIZE * 1.2, blackHoleFoodSize + GROWTH_SPEED * 1.2);
             
-            // Ses efekti
             if (Math.floor(oldSize / 50) < Math.floor(blackHoleSize / 50)) {
                 playHumSound(blackHoleSize / MAX_BLACKHOLE_SIZE);
             }
         }
     }
 
-    // Accretion Disk güncelle
     if (accretionDisk && isMouseActive) {
         accretionDisk.position.copy(mouse3D);
         const diskSize = blackHoleSize / 40;
@@ -272,7 +256,6 @@ function animate() {
         accretionDisk.material.opacity = 0;
     }
 
-    // Enerji partikülleri güncelle
     for (let i = energyParticles.length - 1; i >= 0; i--) {
         const p = energyParticles[i];
         p.position.add(p.velocity);
@@ -288,7 +271,6 @@ function animate() {
         }
     }
 
-    // Yıldızlar
     if (particles) {
         const positionsArray = particles.geometry.attributes.position.array;
         const colorsArray = particles.geometry.attributes.color.array;
@@ -299,17 +281,15 @@ function animate() {
             const y = positionsArray[i + 1];
             const z = positionsArray[i + 2];
             
-            // Normal akış
             positionsArray[i + 2] += 0.5; 
             if (positionsArray[i + 2] > 500) {
                 positionsArray[i + 2] -= 2000;
-                // Rengi sıfırla
+
                 colorsArray[i] = 1;
                 colorsArray[i + 1] = 1;
                 colorsArray[i + 2] = 1;
             }
             
-            // KARADELIK ETKİLEŞİMİ
             if (isMouseActive) {
                 const dx = x - mouse3D.x;
                 const dy = y - mouse3D.y;
@@ -320,18 +300,15 @@ function animate() {
                     const pullStrength = (blackHoleSize - distanceToMouse) / blackHoleSize;
                     
                     if (isRightClick) {
-                        // ANTİ-KARADELIK - İtme
                         const pushForce = pullStrength * pullStrength * 3;
                         positionsArray[i] += (dx / distanceToMouse) * pushForce;
                         positionsArray[i + 1] += (dy / distanceToMouse) * pushForce;
                         positionsArray[i + 2] += (dz / distanceToMouse) * pushForce;
                         
-                        // Renk: Turuncu
                         colorsArray[i] = 1;
                         colorsArray[i + 1] = 0.5;
                         colorsArray[i + 2] = 0;
                     } else {
-                        // Normal karadelik çekimi
                         const spiralForce = pullStrength * pullStrength * 2.5;
                         const angle = Math.atan2(dy, dx);
                         const spiralAngle = angle + time * 3 * pullStrength;
@@ -340,28 +317,23 @@ function animate() {
                         positionsArray[i + 1] -= Math.sin(spiralAngle) * spiralForce;
                         positionsArray[i + 2] -= (dz / distanceToMouse) * spiralForce * 0.5;
                         
-                        // RENK DEĞİŞİMİ: Mavi → Mor → Kırmızı
                         const colorPhase = pullStrength;
                         if (colorPhase < 0.33) {
-                            // Beyaz → Mavi
                             colorsArray[i] = 1 - colorPhase * 2;
                             colorsArray[i + 1] = 1 - colorPhase * 2;
                             colorsArray[i + 2] = 1;
                         } else if (colorPhase < 0.66) {
-                            // Mavi → Mor
                             const phase = (colorPhase - 0.33) * 3;
                             colorsArray[i] = phase;
                             colorsArray[i + 1] = 0;
                             colorsArray[i + 2] = 1;
                         } else {
-                            // Mor → Kırmızı
                             const phase = (colorPhase - 0.66) * 3;
                             colorsArray[i] = 1;
                             colorsArray[i + 1] = 0;
                             colorsArray[i + 2] = 1 - phase;
                         }
                         
-                        // Merkeze yakınsa enerji partikülü oluştur
                         if (distanceToMouse < blackHoleSize * 0.2 && Math.random() < 0.05) {
                             createEnergyParticle(x, y, z);
                             playSwooshSound();
@@ -374,12 +346,10 @@ function animate() {
         particles.geometry.attributes.color.needsUpdate = true;
     }
 
-    // Yemekler
     activeFoodMeshes.forEach(mesh => {
         mesh.position.z -= STAR_WARS_SPEED_Z; 
         mesh.position.y += STAR_WARS_SPEED_Y;
         
-        // KARADELIK ETKİLEŞİMİ
         if (isMouseActive) {
             const dx = mesh.position.x - mouse3D.x;
             const dy = mesh.position.y - mouse3D.y;
@@ -390,13 +360,11 @@ function animate() {
                 const pullStrength = (blackHoleFoodSize - distanceToMouse) / blackHoleFoodSize;
                 
                 if (isRightClick) {
-                    // İtme
                     const pushForce = pullStrength * pullStrength * 4;
                     mesh.position.x += (dx / distanceToMouse) * pushForce;
                     mesh.position.y += (dy / distanceToMouse) * pushForce;
                     mesh.position.z += (dz / distanceToMouse) * pushForce;
                 } else {
-                    // Çekme
                     const force = pullStrength * pullStrength * 3;
                     mesh.position.x -= (dx / distanceToMouse) * force;
                     mesh.position.y -= (dy / distanceToMouse) * force;
@@ -405,9 +373,7 @@ function animate() {
                     mesh.rotation.z += pullStrength * 0.1;
                     mesh.rotation.y += pullStrength * 0.05;
                     
-                    // Merkeze çok yakınsa yut ve patlama efekti
                     if (distanceToMouse < blackHoleFoodSize * 0.1) {
-                        // Patlama partikülü
                         for (let i = 0; i < 5; i++) {
                             createEnergyParticle(
                                 mesh.position.x,
