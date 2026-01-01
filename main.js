@@ -15,15 +15,14 @@ let activeFoodMeshes = [];
 let particles; 
 let spawnInterval;
 let energyParticles = [];
-let accretionDisk;
 
 let mouseX = 0;
 let mouseY = 0;
 let mouse3D = new THREE.Vector3();
 let isMouseActive = false;
 let mouseStillTime = 0;
-let lastMouseX = 0;
-let lastMouseY = 0;
+let lastMouseX = -999;
+let lastMouseY = -999;
 let blackHoleSize = 80;
 let blackHoleFoodSize = 100;
 const MAX_BLACKHOLE_SIZE = 800;
@@ -47,11 +46,9 @@ function init3D() {
     container = document.getElementById('container');
     
     if (!container) {
-        console.error('Container element not found!');
+        console.error('Container not found');
         return;
     }
-    
-    console.log('Initializing 3D scene...');
     
     scene = new THREE.Scene();
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
@@ -60,8 +57,6 @@ function init3D() {
     renderer.setSize(window.innerWidth, window.innerHeight);
     container.appendChild(renderer.domElement);
     
-    console.log('Renderer attached to container');
-    
     camera.position.set(0, 10, 60);
     scene.background = new THREE.Color(0x000000); 
 
@@ -69,7 +64,6 @@ function init3D() {
         positions[i] = (Math.random() - 0.5) * 2000;
         positions[i + 1] = (Math.random() - 0.5) * 2000;
         positions[i + 2] = (Math.random() - 0.5) * 2000;
-        
         colors[i] = 1;
         colors[i + 1] = 1;
         colors[i + 2] = 1;
@@ -89,27 +83,30 @@ function init3D() {
     particles = new THREE.Points(starGeo, starMat);
     scene.add(particles);
 
-    createAccretionDisk();
     initAudio();
 
     window.addEventListener('resize', onWindowResize, false);
-    window.addEventListener('mousemove', onMouseMove, false);
-    window.addEventListener('mouseenter', () => isMouseActive = true);
-    window.addEventListener('mouseleave', () => {
+    document.addEventListener('mousemove', onMouseMove, false);
+    document.addEventListener('mouseenter', () => {
+        isMouseActive = true;
+        console.log('Mouse entered');
+    });
+    document.addEventListener('mouseleave', () => {
         isMouseActive = false;
         mouseStillTime = 0;
         blackHoleSize = 80;
         blackHoleFoodSize = 100;
     });
     
-    window.addEventListener('contextmenu', (e) => {
+    document.addEventListener('contextmenu', (e) => {
         e.preventDefault();
         isRightClick = true;
         setTimeout(() => isRightClick = false, 100);
     });
     
-    window.addEventListener('keydown', (e) => {
+    document.addEventListener('keydown', (e) => {
         if (e.code === 'Space') {
+            e.preventDefault();
             triggerSuperBlackHole();
         }
     });
@@ -117,92 +114,86 @@ function init3D() {
     startStarWarsFlow();
 }
 
-function createAccretionDisk() {
-    const geometry = new THREE.RingGeometry(1, 3, 64);
-    const material = new THREE.MeshBasicMaterial({
-        color: 0x8B00FF,
-        transparent: true,
-        opacity: 0,
-        side: THREE.DoubleSide,
-        blending: THREE.AdditiveBlending
-    });
-    accretionDisk = new THREE.Mesh(geometry, material);
-    accretionDisk.rotation.x = Math.PI / 2;
-    scene.add(accretionDisk);
-}
-
 function initAudio() {
     try {
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
     } catch (e) {
-        console.log("Web Audio API not supported");
+        console.log("Web Audio not supported");
     }
 }
 
 function playHumSound(intensity) {
     if (!audioContext) return;
     
-    if (humSound) {
-        humSound.stop();
+    try {
+        if (humSound) {
+            try { humSound.stop(); } catch(e) {}
+        }
+        
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(50 + intensity * 100, audioContext.currentTime);
+        
+        gainNode.gain.setValueAtTime(0, audioContext.currentTime);
+        gainNode.gain.linearRampToValueAtTime(intensity * 0.1, audioContext.currentTime + 0.1);
+        gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.3);
+        
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        
+        oscillator.start();
+        oscillator.stop(audioContext.currentTime + 0.3);
+        
+        humSound = oscillator;
+    } catch(e) {
+        console.log('Audio error:', e);
     }
-    
-    const oscillator = audioContext.createOscillator();
-    const gainNode = audioContext.createGain();
-    
-    oscillator.type = 'sine';
-    oscillator.frequency.setValueAtTime(50 + intensity * 100, audioContext.currentTime);
-    
-    gainNode.gain.setValueAtTime(0, audioContext.currentTime);
-    gainNode.gain.linearRampToValueAtTime(intensity * 0.1, audioContext.currentTime + 0.1);
-    gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.3);
-    
-    oscillator.connect(gainNode);
-    gainNode.connect(audioContext.destination);
-    
-    oscillator.start();
-    oscillator.stop(audioContext.currentTime + 0.3);
-    
-    humSound = oscillator;
 }
 
 function playSwooshSound() {
     if (!audioContext) return;
     
-    const oscillator = audioContext.createOscillator();
-    const gainNode = audioContext.createGain();
-    
-    oscillator.type = 'sawtooth';
-    oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
-    oscillator.frequency.exponentialRampToValueAtTime(200, audioContext.currentTime + 0.2);
-    
-    gainNode.gain.setValueAtTime(0.05, audioContext.currentTime);
-    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
-    
-    oscillator.connect(gainNode);
-    gainNode.connect(audioContext.destination);
-    
-    oscillator.start();
-    oscillator.stop(audioContext.currentTime + 0.2);
+    try {
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        
+        oscillator.type = 'sawtooth';
+        oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
+        oscillator.frequency.exponentialRampToValueAtTime(200, audioContext.currentTime + 0.2);
+        
+        gainNode.gain.setValueAtTime(0.05, audioContext.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+        
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        
+        oscillator.start();
+        oscillator.stop(audioContext.currentTime + 0.2);
+    } catch(e) {}
 }
 
 function playGulpSound() {
     if (!audioContext) return;
     
-    const oscillator = audioContext.createOscillator();
-    const gainNode = audioContext.createGain();
-    
-    oscillator.type = 'triangle';
-    oscillator.frequency.setValueAtTime(400, audioContext.currentTime);
-    oscillator.frequency.exponentialRampToValueAtTime(100, audioContext.currentTime + 0.15);
-    
-    gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
-    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.15);
-    
-    oscillator.connect(gainNode);
-    gainNode.connect(audioContext.destination);
-    
-    oscillator.start();
-    oscillator.stop(audioContext.currentTime + 0.15);
+    try {
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        
+        oscillator.type = 'triangle';
+        oscillator.frequency.setValueAtTime(400, audioContext.currentTime);
+        oscillator.frequency.exponentialRampToValueAtTime(100, audioContext.currentTime + 0.15);
+        
+        gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.15);
+        
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        
+        oscillator.start();
+        oscillator.stop(audioContext.currentTime + 0.15);
+    } catch(e) {}
 }
 
 function createEnergyParticle(x, y, z) {
@@ -262,16 +253,6 @@ function animate() {
         }
     }
 
-    if (accretionDisk && isMouseActive) {
-        accretionDisk.position.copy(mouse3D);
-        const diskSize = blackHoleSize / 40;
-        accretionDisk.scale.set(diskSize, diskSize, diskSize);
-        accretionDisk.material.opacity = Math.min(blackHoleSize / 200, 0.6);
-        accretionDisk.rotation.z += 0.02 * (blackHoleSize / 100);
-    } else if (accretionDisk) {
-        accretionDisk.material.opacity = 0;
-    }
-
     for (let i = energyParticles.length - 1; i >= 0; i--) {
         const p = energyParticles[i];
         p.position.add(p.velocity);
@@ -305,7 +286,7 @@ function animate() {
                 colorsArray[i + 2] = 1;
             }
             
-            if (isMouseActive) {
+            if (isMouseActive && mouse3D) {
                 const dx = x - mouse3D.x;
                 const dy = y - mouse3D.y;
                 const dz = z - mouse3D.z;
@@ -365,7 +346,7 @@ function animate() {
         mesh.position.z -= STAR_WARS_SPEED_Z; 
         mesh.position.y += STAR_WARS_SPEED_Y;
         
-        if (isMouseActive) {
+        if (isMouseActive && mouse3D) {
             const dx = mesh.position.x - mouse3D.x;
             const dy = mesh.position.y - mouse3D.y;
             const dz = mesh.position.z - mouse3D.z;
@@ -389,7 +370,7 @@ function animate() {
                     mesh.rotation.y += pullStrength * 0.05;
                     
                     if (distanceToMouse < blackHoleFoodSize * 0.1) {
-                        for (let i = 0; i < 5; i++) {
+                        for (let j = 0; j < 5; j++) {
                             createEnergyParticle(
                                 mesh.position.x,
                                 mesh.position.y,
@@ -428,6 +409,8 @@ function onWindowResize() {
 }
 
 function onMouseMove(event) {
+    isMouseActive = true;
+    
     const deltaX = Math.abs(event.clientX - lastMouseX);
     const deltaY = Math.abs(event.clientY - lastMouseY);
     
@@ -449,31 +432,6 @@ function onMouseMove(event) {
     const dir = mouse3D.sub(camera.position).normalize();
     const distance = -camera.position.z / dir.z;
     mouse3D.copy(camera.position).add(dir.multiplyScalar(distance));
-    
-    const cursor = document.getElementById('blackhole-cursor');
-    if (cursor) {
-        cursor.style.left = event.clientX + 'px';
-        cursor.style.top = event.clientY + 'px';
-        cursor.style.display = 'block';
-        
-        const cursorSize = Math.min(blackHoleSize * 2, 600);
-        cursor.style.width = cursorSize + 'px';
-        cursor.style.height = cursorSize + 'px';
-        
-        const glowIntensity = (blackHoleSize / MAX_BLACKHOLE_SIZE) * 100;
-        cursor.style.boxShadow = `
-            0 0 ${20 + glowIntensity}px rgba(138, 43, 226, ${0.4 + glowIntensity/200}),
-            0 0 ${40 + glowIntensity * 2}px rgba(138, 43, 226, ${0.2 + glowIntensity/200}),
-            inset 0 0 ${20 + glowIntensity}px rgba(138, 43, 226, ${0.3 + glowIntensity/200})
-        `;
-        
-        if (blackHoleSize > 400) {
-            const opacity = Math.min((blackHoleSize - 400) / 400, 0.7);
-            cursor.style.backgroundColor = `rgba(0, 0, 0, ${opacity})`;
-        } else {
-            cursor.style.backgroundColor = 'transparent';
-        }
-    }
 }
 
 function startStarWarsFlow() {
@@ -546,16 +504,10 @@ function createFoodMesh(text, xPos) {
 
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
-        console.log('DOM ready, starting 3D...');
         init3D();
         animate();
     });
 } else {
-    console.log('DOM already ready, starting 3D...');
     init3D();
     animate();
 }
-
-window.addEventListener('error', (e) => {
-    console.error('Global error:', e.message, e.filename, e.lineno);
-});
