@@ -1,513 +1,981 @@
 const foods = [
-    "burger king benim ikilim", "burger king kral ikili", "komagene porsiyon çiğ köfte",
-    "arbys", "1.5 adana iskender", "kremalı mantarlı kaşarlı tavuk",
-    "kiremitte konya tava", "tavuk incikten iskender", "kızartma bazlama + sucuklu yumurta",
-    "mangal söyledik knk et, tavuk ne varsa", "yulaf", "ballı yulaf",
-    "tavuklu pilav", "hatay dürüm", "bol malzemos", "ıslak hamburger"
+    "burger king benim ikilim",
+    "burger king kral ikili",
+    "komagene porsiyon çiğ köfte",
+    "arbys",
+    "1.5 adana iskender",
+    "kremalı mantarlı kaşarlı tavuk",
+    "kiremitte konya tava",
+    "tavuk incikten iskender",
+    "kızartma bazlama + sucuklu yumurta",
+    "mangal söyledik knk et, tavuk ne varsa",
+    "yulaf",
+    "ballı yulaf",
+    "tavuklu pilav",
+    "hatay dürüm",
+    "bol malzemos",
+    "ıslak hamburger"
 ];
 
-const STAR_WARS_SPEED_Z = 0.5; 
-const STAR_WARS_SPEED_Y = 0.25; 
-const TEXT_TILT_ANGLE = -Math.PI / 3; 
-const SPAWN_INTERVAL_MS = 600; 
+const BASE_STAR_COUNT = 22000;
+const MIN_STAR_COUNT = 7000;
+const STAR_FIELD_WIDTH = 2200;
+const STAR_FIELD_HEIGHT = 1600;
+const STAR_FIELD_DEPTH = 2400;
+const STAR_SPEED_Z = 0.62;
 
-let activeFoodMeshes = []; 
-let particles; 
-let spawnInterval;
-let energyParticles = [];
+const FOOD_SPEED_Z = 0.55;
+const FOOD_SPEED_Y = 0.30;
+const FOOD_TILT_X = -Math.PI / 3;
+const FOOD_SPAWN_INTERVAL_MS = 820;
+const FOOD_MAX_ACTIVE = 64;
+const SPAWN_MAX_PER_FRAME = 5;
 
-let mouseX = 0;
-let mouseY = 0;
-let mouse3D = new THREE.Vector3();
-let isMouseActive = false;
-let mouseStillTime = 0;
-let lastMouseX = -999;
-let lastMouseY = -999;
-let blackHoleSize = 80;
-let blackHoleFoodSize = 100;
-const MAX_BLACKHOLE_SIZE = 800;
-const GROWTH_SPEED = 2;
-const MOUSE_MOVE_THRESHOLD = 5;
+const MIN_BLACKHOLE_RADIUS = 4;
+const MAX_BLACKHOLE_RADIUS = 18;
+const BLACKHOLE_LERP = 0.14;
+const BLACKHOLE_GROW_START_MS = 260;
+const BLACKHOLE_GROW_FULL_MS = 3600;
+const BLACKHOLE_POWER_START_MS = 520;
+const BLACKHOLE_POWER_RATE = 0.85;
+const BLACKHOLE_POWER_MAX = 4.2;
+const TOUCH_HOLD_MS = 420;
+const POWER_RESET_THRESHOLD_MOUSE_PX = 3;
+const POWER_RESET_THRESHOLD_TOUCH_PX = 9;
 
-let audioContext;
-let humSound;
-let isRightClick = false;
+const STAR_INFLUENCE_MULT = 2.9;
+const STAR_HORIZON_MULT = 0.5;
+const STAR_PULL_FORCE = 3.0;
+const STAR_SWIRL_FORCE = 1.45;
+const STAR_PUSH_FORCE = 2.6;
+const STAR_GRAVITY_BASE = 46;
+const STAR_DRAG = 0.92;
+const STAR_HORIZON_CAPTURE_MULT = 1.08;
 
-let container;
+const FOOD_INFLUENCE_MULT = 3.35;
+const FOOD_HORIZON_MULT = 0.64;
+const FOOD_PULL_FORCE = 2.8;
+const FOOD_SWIRL_FORCE = 1.15;
+const FOOD_PUSH_FORCE = 2.4;
+const FOOD_FLOW_POWER_MULT = 0.7;
+const FOOD_SPAWN_POWER_MULT = 0.78;
+const FOOD_MIN_SPAWN_INTERVAL_MS = 240;
+const FOOD_GRAVITY_BASE = 38;
+const FOOD_DRAG = 0.86;
+const FOOD_HORIZON_CAPTURE_MULT = 1.1;
+
 let scene;
 let camera;
 let renderer;
+let stars;
+let starCount = BASE_STAR_COUNT;
+let starPositions;
+let starDrift;
+let starVelX;
+let starVelY;
 
-const particleCount = 45000; 
-const positions = new Float32Array(particleCount * 3);
-const colors = new Float32Array(particleCount * 3);
+let blackHoleCore;
+let blackHoleRadius = MIN_BLACKHOLE_RADIUS;
+let blackHolePulse = 0;
+let blackHolePower = 0;
 
-function init3D() {
-    container = document.getElementById('container');
-    
+let constellationGroup;
+let constellationPointsMaterial;
+let constellationLineMaterial;
+
+let foodMeshes = [];
+let maxActiveFood = FOOD_MAX_ACTIVE;
+
+const pointerTargetNDC = new THREE.Vector2(0, 0);
+const pointerSmoothNDC = new THREE.Vector2(0, 0);
+const pointerRayPoint = new THREE.Vector3();
+const pointerRayDir = new THREE.Vector3(0, 0, -1);
+const pointerWorld = new THREE.Vector3();
+
+let pointerInside = false;
+let isRightPointerDown = false;
+let lastPointerMoveMs = performance.now();
+let lastFrameMs = performance.now();
+let spawnAccumulatorMs = 0;
+let touchHoldTimer = null;
+let touchHoldPointerId = null;
+let touchHoldActivated = false;
+let powerAnchorClientX = null;
+let powerAnchorClientY = null;
+
+function resolvePerformanceProfile() {
+    const coarsePointer = typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
+    const cores = Number(navigator.hardwareConcurrency || 0);
+    const deviceMemory = Number(navigator.deviceMemory || 0);
+    const dpr = Number(window.devicePixelRatio || 1);
+
+    let starMultiplier = 1;
+    let foodMultiplier = 1;
+
+    if (coarsePointer) {
+        starMultiplier *= 0.74;
+        foodMultiplier *= 0.86;
+    }
+    if (cores && cores <= 4) {
+        starMultiplier *= 0.72;
+        foodMultiplier *= 0.9;
+    } else if (cores && cores <= 6) {
+        starMultiplier *= 0.87;
+    }
+    if (deviceMemory && deviceMemory <= 4) {
+        starMultiplier *= 0.72;
+        foodMultiplier *= 0.9;
+    }
+    if (dpr > 1.6) {
+        starMultiplier *= 0.86;
+    }
+
+    starCount = Math.max(MIN_STAR_COUNT, Math.min(BASE_STAR_COUNT, Math.round(BASE_STAR_COUNT * starMultiplier)));
+    maxActiveFood = Math.max(28, Math.round(FOOD_MAX_ACTIVE * foodMultiplier));
+}
+
+function init() {
+    const container = document.getElementById("container");
     if (!container) {
-        console.error('Container not found');
         return;
     }
-    
+
     scene = new THREE.Scene();
-    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
-    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    
+    scene.background = new THREE.Color(0x000000);
+
+    camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 2800);
+    camera.position.set(0, 6, 75);
+
+    renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
     renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.8));
+    renderer.outputEncoding = THREE.sRGBEncoding;
+    renderer.domElement.style.touchAction = "none";
+    renderer.domElement.style.cursor = "none";
     container.appendChild(renderer.domElement);
-    
-    camera.position.set(0, 10, 60);
-    scene.background = new THREE.Color(0x000000); 
 
-    for (let i = 0; i < particleCount * 3; i += 3) {
-        positions[i] = (Math.random() - 0.5) * 2000;
-        positions[i + 1] = (Math.random() - 0.5) * 2000;
-        positions[i + 2] = (Math.random() - 0.5) * 2000;
-        colors[i] = 1;
-        colors[i + 1] = 1;
-        colors[i + 2] = 1;
+    resolvePerformanceProfile();
+    createStars();
+    createBlackHoleVisual();
+    loadConstellationFromImage("husospace.png");
+
+    for (let i = 0; i < 4; i += 1) {
+        spawnFoodRow();
     }
-    
-    const starGeo = new THREE.BufferGeometry();
-    starGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    starGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    
-    const starMat = new THREE.PointsMaterial({
-        size: 0.7,
-        sizeAttenuation: true,
-        transparent: true,
-        opacity: 0.8,
-        vertexColors: true
-    });
-    particles = new THREE.Points(starGeo, starMat);
-    scene.add(particles);
 
-    initAudio();
-
-    window.addEventListener('resize', onWindowResize, false);
-    document.addEventListener('mousemove', onMouseMove, false);
-    document.addEventListener('mouseenter', () => {
-        isMouseActive = true;
-        console.log('Mouse entered');
-    });
-    document.addEventListener('mouseleave', () => {
-        isMouseActive = false;
-        mouseStillTime = 0;
-        blackHoleSize = 80;
-        blackHoleFoodSize = 100;
-    });
-    
-    document.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        isRightClick = true;
-        setTimeout(() => isRightClick = false, 100);
-    });
-    
-    document.addEventListener('keydown', (e) => {
-        if (e.code === 'Space') {
-            e.preventDefault();
-            triggerSuperBlackHole();
-        }
-    });
-    
-    startStarWarsFlow();
+    bindEvents();
+    animate();
 }
 
-function initAudio() {
-    try {
-        audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    } catch (e) {
-        console.log("Web Audio not supported");
+function bindEvents() {
+    window.addEventListener("resize", onWindowResize);
+
+    renderer.domElement.addEventListener("pointerenter", () => {
+        pointerInside = true;
+        powerAnchorClientX = null;
+        powerAnchorClientY = null;
+    });
+
+    renderer.domElement.addEventListener("pointerleave", () => {
+        pointerInside = false;
+        clearPointerPushState();
+    });
+
+    renderer.domElement.addEventListener("pointermove", onPointerMove);
+    renderer.domElement.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerCancel);
+    window.addEventListener("blur", clearPointerPushState);
+
+    renderer.domElement.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+    });
+
+    window.addEventListener("keydown", (event) => {
+        if (event.code === "Space") {
+            event.preventDefault();
+            blackHolePulse = Math.max(blackHolePulse, 11);
+        }
+    });
+}
+
+function clearTouchHoldTimer() {
+    if (touchHoldTimer !== null) {
+        window.clearTimeout(touchHoldTimer);
+        touchHoldTimer = null;
     }
 }
 
-function playHumSound(intensity) {
-    if (!audioContext) return;
-    
-    try {
-        if (humSound) {
-            try { humSound.stop(); } catch(e) {}
-        }
-        
-        const oscillator = audioContext.createOscillator();
-        const gainNode = audioContext.createGain();
-        
-        oscillator.type = 'sine';
-        oscillator.frequency.setValueAtTime(50 + intensity * 100, audioContext.currentTime);
-        
-        gainNode.gain.setValueAtTime(0, audioContext.currentTime);
-        gainNode.gain.linearRampToValueAtTime(intensity * 0.1, audioContext.currentTime + 0.1);
-        gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.3);
-        
-        oscillator.connect(gainNode);
-        gainNode.connect(audioContext.destination);
-        
-        oscillator.start();
-        oscillator.stop(audioContext.currentTime + 0.3);
-        
-        humSound = oscillator;
-    } catch(e) {
-        console.log('Audio error:', e);
+function clearPointerPushState() {
+    clearTouchHoldTimer();
+    isRightPointerDown = false;
+    touchHoldPointerId = null;
+    touchHoldActivated = false;
+    blackHolePower = 0;
+    powerAnchorClientX = null;
+    powerAnchorClientY = null;
+}
+
+function onPointerDown(event) {
+    pointerInside = true;
+    onPointerMove(event);
+
+    if (event.pointerType === "touch") {
+        clearTouchHoldTimer();
+        touchHoldPointerId = event.pointerId;
+        touchHoldActivated = false;
+        touchHoldTimer = window.setTimeout(() => {
+            touchHoldActivated = true;
+            isRightPointerDown = true;
+        }, TOUCH_HOLD_MS);
+        return;
+    }
+
+    if (event.button === 2) {
+        isRightPointerDown = true;
+        return;
+    }
+
+    if (event.button === 0) {
+        spawnFoodRow();
     }
 }
 
-function playSwooshSound() {
-    if (!audioContext) return;
-    
-    try {
-        const oscillator = audioContext.createOscillator();
-        const gainNode = audioContext.createGain();
-        
-        oscillator.type = 'sawtooth';
-        oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
-        oscillator.frequency.exponentialRampToValueAtTime(200, audioContext.currentTime + 0.2);
-        
-        gainNode.gain.setValueAtTime(0.05, audioContext.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
-        
-        oscillator.connect(gainNode);
-        gainNode.connect(audioContext.destination);
-        
-        oscillator.start();
-        oscillator.stop(audioContext.currentTime + 0.2);
-    } catch(e) {}
-}
-
-function playGulpSound() {
-    if (!audioContext) return;
-    
-    try {
-        const oscillator = audioContext.createOscillator();
-        const gainNode = audioContext.createGain();
-        
-        oscillator.type = 'triangle';
-        oscillator.frequency.setValueAtTime(400, audioContext.currentTime);
-        oscillator.frequency.exponentialRampToValueAtTime(100, audioContext.currentTime + 0.15);
-        
-        gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.15);
-        
-        oscillator.connect(gainNode);
-        gainNode.connect(audioContext.destination);
-        
-        oscillator.start();
-        oscillator.stop(audioContext.currentTime + 0.15);
-    } catch(e) {}
-}
-
-function createEnergyParticle(x, y, z) {
-    const geometry = new THREE.SphereGeometry(0.5, 8, 8);
-    const material = new THREE.MeshBasicMaterial({
-        color: new THREE.Color().setHSL(Math.random() * 0.3 + 0.7, 1, 0.5),
-        transparent: true,
-        opacity: 1,
-        blending: THREE.AdditiveBlending
-    });
-    
-    const particle = new THREE.Mesh(geometry, material);
-    particle.position.set(x, y, z);
-    particle.velocity = new THREE.Vector3(
-        (Math.random() - 0.5) * 0.5,
-        (Math.random() - 0.5) * 0.5,
-        (Math.random() - 0.5) * 0.5
-    );
-    particle.life = 1;
-    
-    scene.add(particle);
-    energyParticles.push(particle);
-}
-
-function triggerSuperBlackHole() {
-    blackHoleSize = MAX_BLACKHOLE_SIZE * 2;
-    blackHoleFoodSize = MAX_BLACKHOLE_SIZE * 2.5;
-    
-    playHumSound(1);
-    
-    setTimeout(() => {
-        const interval = setInterval(() => {
-            blackHoleSize = Math.max(80, blackHoleSize - 20);
-            blackHoleFoodSize = Math.max(100, blackHoleFoodSize - 25);
-            
-            if (blackHoleSize <= 80) {
-                clearInterval(interval);
-            }
-        }, 50);
-    }, 3000);
-}
-
-function animate() {
-    requestAnimationFrame(animate); 
-
-    if (isMouseActive) {
-        mouseStillTime += 1/60;
-        
-        if (mouseStillTime > 0.1) {
-            const oldSize = blackHoleSize;
-            blackHoleSize = Math.min(MAX_BLACKHOLE_SIZE, blackHoleSize + GROWTH_SPEED);
-            blackHoleFoodSize = Math.min(MAX_BLACKHOLE_SIZE * 1.2, blackHoleFoodSize + GROWTH_SPEED * 1.2);
-            
-            if (Math.floor(oldSize / 50) < Math.floor(blackHoleSize / 50)) {
-                playHumSound(blackHoleSize / MAX_BLACKHOLE_SIZE);
-            }
+function onPointerUp(event) {
+    if (event.pointerType === "touch") {
+        if (touchHoldPointerId === null || event.pointerId !== touchHoldPointerId) {
+            return;
         }
+
+        clearTouchHoldTimer();
+        if (!touchHoldActivated) {
+            spawnFoodRow();
+        }
+        isRightPointerDown = false;
+        touchHoldPointerId = null;
+        touchHoldActivated = false;
+        return;
     }
 
-    for (let i = energyParticles.length - 1; i >= 0; i--) {
-        const p = energyParticles[i];
-        p.position.add(p.velocity);
-        p.life -= 0.02;
-        p.material.opacity = p.life;
-        p.scale.setScalar(1 + (1 - p.life));
-        
-        if (p.life <= 0) {
-            scene.remove(p);
-            p.geometry.dispose();
-            p.material.dispose();
-            energyParticles.splice(i, 1);
-        }
+    if (event.button === 2) {
+        isRightPointerDown = false;
     }
+}
 
-    if (particles) {
-        const positionsArray = particles.geometry.attributes.position.array;
-        const colorsArray = particles.geometry.attributes.color.array;
-        const time = Date.now() * 0.0001;
-        
-        for (let i = 0; i < positionsArray.length; i += 3) {
-            const x = positionsArray[i];
-            const y = positionsArray[i + 1];
-            const z = positionsArray[i + 2];
-            
-            positionsArray[i + 2] += 0.5; 
-            if (positionsArray[i + 2] > 500) {
-                positionsArray[i + 2] -= 2000;
-                colorsArray[i] = 1;
-                colorsArray[i + 1] = 1;
-                colorsArray[i + 2] = 1;
-            }
-            
-            if (isMouseActive && mouse3D) {
-                const dx = x - mouse3D.x;
-                const dy = y - mouse3D.y;
-                const dz = z - mouse3D.z;
-                const distanceToMouse = Math.sqrt(dx * dx + dy * dy + dz * dz);
-                
-                if (distanceToMouse < blackHoleSize) {
-                    const pullStrength = (blackHoleSize - distanceToMouse) / blackHoleSize;
-                    
-                    if (isRightClick) {
-                        const pushForce = pullStrength * pullStrength * 3;
-                        positionsArray[i] += (dx / distanceToMouse) * pushForce;
-                        positionsArray[i + 1] += (dy / distanceToMouse) * pushForce;
-                        positionsArray[i + 2] += (dz / distanceToMouse) * pushForce;
-                        
-                        colorsArray[i] = 1;
-                        colorsArray[i + 1] = 0.5;
-                        colorsArray[i + 2] = 0;
-                    } else {
-                        const spiralForce = pullStrength * pullStrength * 2.5;
-                        const angle = Math.atan2(dy, dx);
-                        const spiralAngle = angle + time * 3 * pullStrength;
-                        
-                        positionsArray[i] -= Math.cos(spiralAngle) * spiralForce;
-                        positionsArray[i + 1] -= Math.sin(spiralAngle) * spiralForce;
-                        positionsArray[i + 2] -= (dz / distanceToMouse) * spiralForce * 0.5;
-                        
-                        const colorPhase = pullStrength;
-                        if (colorPhase < 0.33) {
-                            colorsArray[i] = 1 - colorPhase * 2;
-                            colorsArray[i + 1] = 1 - colorPhase * 2;
-                            colorsArray[i + 2] = 1;
-                        } else if (colorPhase < 0.66) {
-                            const phase = (colorPhase - 0.33) * 3;
-                            colorsArray[i] = phase;
-                            colorsArray[i + 1] = 0;
-                            colorsArray[i + 2] = 1;
-                        } else {
-                            const phase = (colorPhase - 0.66) * 3;
-                            colorsArray[i] = 1;
-                            colorsArray[i + 1] = 0;
-                            colorsArray[i + 2] = 1 - phase;
-                        }
-                        
-                        if (distanceToMouse < blackHoleSize * 0.2 && Math.random() < 0.05) {
-                            createEnergyParticle(x, y, z);
-                            playSwooshSound();
-                        }
-                    }
-                }
-            }
-        }
-        particles.geometry.attributes.position.needsUpdate = true;
-        particles.geometry.attributes.color.needsUpdate = true;
+function onPointerCancel(event) {
+    if (event.pointerType !== "touch") {
+        return;
     }
-
-    activeFoodMeshes.forEach(mesh => {
-        mesh.position.z -= STAR_WARS_SPEED_Z; 
-        mesh.position.y += STAR_WARS_SPEED_Y;
-        
-        if (isMouseActive && mouse3D) {
-            const dx = mesh.position.x - mouse3D.x;
-            const dy = mesh.position.y - mouse3D.y;
-            const dz = mesh.position.z - mouse3D.z;
-            const distanceToMouse = Math.sqrt(dx * dx + dy * dy + dz * dz);
-            
-            if (distanceToMouse < blackHoleFoodSize) {
-                const pullStrength = (blackHoleFoodSize - distanceToMouse) / blackHoleFoodSize;
-                
-                if (isRightClick) {
-                    const pushForce = pullStrength * pullStrength * 4;
-                    mesh.position.x += (dx / distanceToMouse) * pushForce;
-                    mesh.position.y += (dy / distanceToMouse) * pushForce;
-                    mesh.position.z += (dz / distanceToMouse) * pushForce;
-                } else {
-                    const force = pullStrength * pullStrength * 3;
-                    mesh.position.x -= (dx / distanceToMouse) * force;
-                    mesh.position.y -= (dy / distanceToMouse) * force;
-                    mesh.position.z -= (dz / distanceToMouse) * force;
-                    
-                    mesh.rotation.z += pullStrength * 0.1;
-                    mesh.rotation.y += pullStrength * 0.05;
-                    
-                    if (distanceToMouse < blackHoleFoodSize * 0.1) {
-                        for (let j = 0; j < 5; j++) {
-                            createEnergyParticle(
-                                mesh.position.x,
-                                mesh.position.y,
-                                mesh.position.z
-                            );
-                        }
-                        playGulpSound();
-                        
-                        scene.remove(mesh);
-                        if(mesh.material.map) mesh.material.map.dispose();
-                        if(mesh.material) mesh.material.dispose();
-                        if(mesh.geometry) mesh.geometry.dispose();
-                        activeFoodMeshes = activeFoodMeshes.filter(m => m !== mesh);
-                        return;
-                    }
-                }
-            }
-        }
-
-        if (mesh.position.z < -600) {
-            scene.remove(mesh); 
-            if(mesh.material.map) mesh.material.map.dispose();
-            if(mesh.material) mesh.material.dispose();
-            if(mesh.geometry) mesh.geometry.dispose();
-            activeFoodMeshes = activeFoodMeshes.filter(m => m !== mesh);
-        }
-    });
-
-    renderer.render(scene, camera); 
+    clearPointerPushState();
 }
 
 function onWindowResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.8));
 }
 
-function onMouseMove(event) {
-    isMouseActive = true;
-    
-    const deltaX = Math.abs(event.clientX - lastMouseX);
-    const deltaY = Math.abs(event.clientY - lastMouseY);
-    
-    if (deltaX > MOUSE_MOVE_THRESHOLD || deltaY > MOUSE_MOVE_THRESHOLD) {
-        mouseStillTime = 0;
-        blackHoleSize = Math.max(80, blackHoleSize - 5);
-        blackHoleFoodSize = Math.max(100, blackHoleFoodSize - 5);
+function onPointerMove(event) {
+    const rect = renderer.domElement.getBoundingClientRect();
+    const x = (event.clientX - rect.left) / rect.width;
+    const y = (event.clientY - rect.top) / rect.height;
+    const now = performance.now();
+
+    pointerTargetNDC.x = x * 2 - 1;
+    pointerTargetNDC.y = -(y * 2 - 1);
+    pointerInside = true;
+
+    if (powerAnchorClientX === null || powerAnchorClientY === null) {
+        powerAnchorClientX = event.clientX;
+        powerAnchorClientY = event.clientY;
+        lastPointerMoveMs = now;
+        blackHolePower = 0;
+        return;
     }
-    
-    lastMouseX = event.clientX;
-    lastMouseY = event.clientY;
-    
-    mouseX = (event.clientX / window.innerWidth) * 2 - 1;
-    mouseY = -(event.clientY / window.innerHeight) * 2 + 1;
-    
-    mouse3D.set(mouseX, mouseY, 0.5);
-    mouse3D.unproject(camera);
-    
-    const dir = mouse3D.sub(camera.position).normalize();
-    const distance = -camera.position.z / dir.z;
-    mouse3D.copy(camera.position).add(dir.multiplyScalar(distance));
+
+    const dx = event.clientX - powerAnchorClientX;
+    const dy = event.clientY - powerAnchorClientY;
+    const threshold = event.pointerType === "touch"
+        ? POWER_RESET_THRESHOLD_TOUCH_PX
+        : POWER_RESET_THRESHOLD_MOUSE_PX;
+    const movedEnough = (dx * dx + dy * dy) >= threshold * threshold;
+
+    if (movedEnough) {
+        powerAnchorClientX = event.clientX;
+        powerAnchorClientY = event.clientY;
+        lastPointerMoveMs = now;
+        blackHolePower = 0;
+    }
 }
 
-function startStarWarsFlow() {
-    renderer.domElement.addEventListener('click', onSceneClick);
-    spawnInterval = setInterval(() => {
-        spawnFoodRow();
-    }, SPAWN_INTERVAL_MS);
+function createStars() {
+    starPositions = new Float32Array(starCount * 3);
+    starDrift = new Float32Array(starCount);
+    starVelX = new Float32Array(starCount);
+    starVelY = new Float32Array(starCount);
+
+    for (let i = 0; i < starCount; i += 1) {
+        const index3 = i * 3;
+        resetStar(index3, false, i);
+        starDrift[i] = 0.65 + Math.random() * 0.75;
+        starVelX[i] = 0;
+        starVelY[i] = 0;
+    }
+
+    const starGeometry = new THREE.BufferGeometry();
+    starGeometry.setAttribute("position", new THREE.BufferAttribute(starPositions, 3));
+
+    const starMaterial = new THREE.PointsMaterial({
+        color: 0xffffff,
+        size: 0.82,
+        sizeAttenuation: true,
+        transparent: true,
+        opacity: 0.82,
+        depthWrite: false
+    });
+
+    stars = new THREE.Points(starGeometry, starMaterial);
+    scene.add(stars);
 }
 
-function spawnFoodRow() {
-    const randomVal = Math.random();
-    const shuffledFoods = [...foods].sort(() => 0.5 - Math.random());
-    
-    if (randomVal > 0.4) {
-        createFoodMesh(shuffledFoods[0], 0); 
+function resetStar(index3, moveToBack, starIndex = Math.floor(index3 / 3)) {
+    starPositions[index3] = (Math.random() - 0.5) * STAR_FIELD_WIDTH;
+    starPositions[index3 + 1] = (Math.random() - 0.5) * STAR_FIELD_HEIGHT;
+
+    if (moveToBack) {
+        starPositions[index3 + 2] = -STAR_FIELD_DEPTH * 0.55 - Math.random() * STAR_FIELD_DEPTH * 0.4;
     } else {
-        createFoodMesh(shuffledFoods[0], -40); 
-        createFoodMesh(shuffledFoods[1], 40);
+        starPositions[index3 + 2] = (Math.random() - 0.5) * STAR_FIELD_DEPTH;
+    }
+
+    if (starVelX && starVelY) {
+        starVelX[starIndex] = 0;
+        starVelY[starIndex] = 0;
     }
 }
 
-function onSceneClick(event) {
-    spawnFoodRow(); 
-}
+function createBlackHoleTexture() {
+    const size = 256;
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const context = canvas.getContext("2d");
 
-function createFoodMesh(text, xPos) {
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d');
-    
-    const fontSize = 60; 
-    context.font = `Bold ${fontSize}px Arial`;
-    const textMetrics = context.measureText(text);
-    const canvasWidth = textMetrics.width + 40;
-    const canvasHeight = 100;
-    
-    canvas.width = canvasWidth;
-    canvas.height = canvasHeight;
-    
-    context.font = `Bold ${fontSize}px Arial`;
-    context.fillStyle = '#ffce00'; 
-    context.textAlign = 'center';
-    context.textBaseline = 'middle';
-    context.fillText(text, canvas.width / 2, canvas.height / 2);
+    const gradient = context.createRadialGradient(
+        size / 2,
+        size / 2,
+        0,
+        size / 2,
+        size / 2,
+        size / 2
+    );
+    gradient.addColorStop(0, "rgba(0,0,0,1)");
+    gradient.addColorStop(0.58, "rgba(0,0,0,0.995)");
+    gradient.addColorStop(0.7, "rgba(20,10,0,0.92)");
+    gradient.addColorStop(0.82, "rgba(180,110,28,0.22)");
+    gradient.addColorStop(0.9, "rgba(60,35,12,0.1)");
+    gradient.addColorStop(1, "rgba(0,0,0,0)");
+
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, size, size);
 
     const texture = new THREE.CanvasTexture(canvas);
     texture.minFilter = THREE.LinearFilter;
-    
-    const planeWidth = canvasWidth / 15; 
-    const planeHeight = canvasHeight / 15;
-    
-    const geometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
-    const material = new THREE.MeshBasicMaterial({ 
-        map: texture, 
-        transparent: true, 
-        side: THREE.DoubleSide
-    });
-    
-    const mesh = new THREE.Mesh(geometry, material);
-
-    const randomZOffset = Math.random() * 20; 
-
-    mesh.position.set(xPos, -30, 40 + randomZOffset);
-    mesh.rotation.x = TEXT_TILT_ANGLE; 
-
-    scene.add(mesh);
-    activeFoodMeshes.push(mesh);
-    
-    return mesh;
+    return texture;
 }
 
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-        init3D();
-        animate();
+function createBlackHoleVisual() {
+    const holeTexture = createBlackHoleTexture();
+    blackHoleCore = new THREE.Mesh(
+        new THREE.PlaneGeometry(2, 2),
+        new THREE.MeshBasicMaterial({
+            map: holeTexture,
+            transparent: true,
+            depthWrite: false,
+            depthTest: false
+        })
+    );
+    blackHoleCore.renderOrder = 100;
+    blackHoleCore.position.set(0, 0, 3);
+    scene.add(blackHoleCore);
+}
+
+function loadConstellationFromImage(imageUrl) {
+    const image = new Image();
+    image.decoding = "async";
+    image.onload = () => {
+        buildConstellation(image);
+    };
+    image.onerror = () => {
+        console.warn("husospace.png okunamadi, takimyildiz katmani atlandi.");
+    };
+    image.src = imageUrl;
+}
+
+function buildConstellation(image) {
+    const scanMaxWidth = 320;
+    const scanScale = Math.min(1, scanMaxWidth / image.width);
+    const scanWidth = Math.max(96, Math.floor(image.width * scanScale));
+    const scanHeight = Math.max(64, Math.floor(image.height * scanScale));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = scanWidth;
+    canvas.height = scanHeight;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) {
+        return;
+    }
+
+    context.drawImage(image, 0, 0, scanWidth, scanHeight);
+    const pixels = context.getImageData(0, 0, scanWidth, scanHeight).data;
+    const sampleStep = 2;
+
+    const candidates = [];
+    for (let y = 0; y < scanHeight; y += sampleStep) {
+        for (let x = 0; x < scanWidth; x += sampleStep) {
+            const pixelIndex = (y * scanWidth + x) * 4;
+            const r = pixels[pixelIndex];
+            const g = pixels[pixelIndex + 1];
+            const b = pixels[pixelIndex + 2];
+            const a = pixels[pixelIndex + 3];
+
+            const alpha = a / 255;
+            const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+            if (alpha < 0.05 && luminance < 0.1) {
+                continue;
+            }
+
+            const weight = luminance * 0.7 + alpha * 0.3;
+            if (weight < 0.15) {
+                continue;
+            }
+
+            const hash = ((x * 73856093) ^ (y * 19349663)) >>> 0;
+            const keepChance = 0.16 + weight * 0.62;
+            if ((hash % 1000) / 1000 > keepChance) {
+                continue;
+            }
+
+            candidates.push({ x, y, weight });
+        }
+    }
+
+    if (!candidates.length) {
+        return;
+    }
+
+    const targetPointCount = 2600;
+    const stride = Math.max(1, Math.floor(candidates.length / targetPointCount));
+    const worldWidth = 330;
+    const worldHeight = worldWidth * (scanHeight / scanWidth);
+
+    const pointTriples = [];
+    const sampled = [];
+    const sampledLookup = new Map();
+
+    for (let i = 0; i < candidates.length; i += stride) {
+        const candidate = candidates[i];
+        const wx = (candidate.x / (scanWidth - 1) - 0.5) * worldWidth;
+        const wy = (0.5 - candidate.y / (scanHeight - 1)) * worldHeight;
+        const wz = -185 + (Math.random() - 0.5) * 2.2;
+
+        const sampledIndex = sampled.length;
+        sampled.push({
+            pixelX: candidate.x,
+            pixelY: candidate.y,
+            weight: candidate.weight,
+            x: wx,
+            y: wy,
+            z: wz
+        });
+        sampledLookup.set(`${candidate.x}|${candidate.y}`, sampledIndex);
+        pointTriples.push(wx, wy, wz);
+
+        if (sampled.length >= targetPointCount) {
+            break;
+        }
+    }
+
+    if (pointTriples.length < 120) {
+        return;
+    }
+
+    const lineTriples = [];
+    const neighbors = [
+        [sampleStep, 0],
+        [0, sampleStep],
+        [sampleStep, sampleStep],
+        [-sampleStep, sampleStep],
+        [sampleStep * 2, 0],
+        [0, sampleStep * 2]
+    ];
+    const maxSegments = 7600;
+
+    for (let i = 0; i < sampled.length; i += 1) {
+        const point = sampled[i];
+
+        for (let n = 0; n < neighbors.length; n += 1) {
+            if (lineTriples.length / 6 >= maxSegments) {
+                break;
+            }
+
+            const dx = neighbors[n][0];
+            const dy = neighbors[n][1];
+            const neighborIndex = sampledLookup.get(`${point.pixelX + dx}|${point.pixelY + dy}`);
+            if (neighborIndex === undefined || neighborIndex <= i) {
+                continue;
+            }
+
+            const neighbor = sampled[neighborIndex];
+            const worldDx = point.x - neighbor.x;
+            const worldDy = point.y - neighbor.y;
+            const distSq = worldDx * worldDx + worldDy * worldDy;
+            if (distSq > 22 * 22) {
+                continue;
+            }
+
+            const hash = (((point.pixelX + neighbor.pixelX) * 92821) ^ ((point.pixelY + neighbor.pixelY) * 68917)) >>> 0;
+            const connectChance = 0.18 + Math.min(0.5, (point.weight + neighbor.weight) * 0.24);
+            if ((hash % 1000) / 1000 > connectChance) {
+                continue;
+            }
+
+            lineTriples.push(
+                point.x,
+                point.y,
+                point.z,
+                neighbor.x,
+                neighbor.y,
+                neighbor.z
+            );
+        }
+
+        if (lineTriples.length / 6 >= maxSegments) {
+            break;
+        }
+    }
+
+    constellationGroup = new THREE.Group();
+
+    const pointsGeometry = new THREE.BufferGeometry();
+    pointsGeometry.setAttribute("position", new THREE.Float32BufferAttribute(pointTriples, 3));
+    constellationPointsMaterial = new THREE.PointsMaterial({
+        color: 0xb7d6ff,
+        size: 1.9,
+        sizeAttenuation: true,
+        transparent: true,
+        opacity: 0.24,
+        depthWrite: false,
+        depthTest: false,
+        blending: THREE.AdditiveBlending
     });
+    const pointsMesh = new THREE.Points(pointsGeometry, constellationPointsMaterial);
+    pointsMesh.renderOrder = 4;
+    constellationGroup.add(pointsMesh);
+
+    if (lineTriples.length > 0) {
+        const lineGeometry = new THREE.BufferGeometry();
+        lineGeometry.setAttribute("position", new THREE.Float32BufferAttribute(lineTriples, 3));
+        constellationLineMaterial = new THREE.LineBasicMaterial({
+            color: 0x8bb7ff,
+            transparent: true,
+            opacity: 0.14,
+            depthWrite: false,
+            depthTest: false,
+            blending: THREE.AdditiveBlending
+        });
+        const lines = new THREE.LineSegments(lineGeometry, constellationLineMaterial);
+        lines.renderOrder = 3;
+        constellationGroup.add(lines);
+    }
+
+    constellationGroup.scale.set(2.05, 2.05, 1);
+    constellationGroup.position.set(0, 10, -20);
+    constellationGroup.rotation.x = -0.02;
+    scene.add(constellationGroup);
+}
+
+function spawnFoodRow() {
+    const shuffledFoods = [...foods].sort(() => 0.5 - Math.random());
+
+    if (Math.random() > 0.42) {
+        createFoodMesh(shuffledFoods[0], THREE.MathUtils.randFloatSpread(30));
+    } else {
+        createFoodMesh(shuffledFoods[0], -22 + Math.random() * 7);
+        createFoodMesh(shuffledFoods[1], 22 - Math.random() * 7);
+    }
+
+    while (foodMeshes.length > maxActiveFood) {
+        removeFoodAt(0);
+    }
+}
+
+function createFoodMesh(text, xPos) {
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+    const fontSize = 62;
+    context.font = `700 ${fontSize}px "Arial Black", Arial, sans-serif`;
+
+    const width = Math.ceil(context.measureText(text).width + 64);
+    const height = 118;
+    canvas.width = width;
+    canvas.height = height;
+
+    context.font = `700 ${fontSize}px "Arial Black", Arial, sans-serif`;
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+
+    context.strokeStyle = "rgba(0, 0, 0, 0.65)";
+    context.lineWidth = 8;
+    context.strokeText(text, width / 2, height / 2);
+
+    context.fillStyle = "#ffd040";
+    context.fillText(text, width / 2, height / 2);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter;
+
+    const geometry = new THREE.PlaneGeometry(width / 16, height / 16);
+    const material = new THREE.MeshBasicMaterial({
+        map: texture,
+        transparent: true,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        opacity: 0.96
+    });
+
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.set(xPos, -64, 58 + Math.random() * 18);
+    mesh.rotation.x = FOOD_TILT_X;
+    mesh.userData = {
+        vx: 0,
+        vy: 0,
+        captured: false
+    };
+
+    scene.add(mesh);
+    foodMeshes.push(mesh);
+}
+
+function removeFoodAt(index) {
+    const mesh = foodMeshes[index];
+    if (!mesh) {
+        return;
+    }
+
+    scene.remove(mesh);
+    if (mesh.material && mesh.material.map) {
+        mesh.material.map.dispose();
+    }
+    if (mesh.material) {
+        mesh.material.dispose();
+    }
+    if (mesh.geometry) {
+        mesh.geometry.dispose();
+    }
+
+    foodMeshes.splice(index, 1);
+}
+
+function updatePointerRay() {
+    pointerRayPoint.set(pointerSmoothNDC.x, pointerSmoothNDC.y, 0.5);
+    pointerRayPoint.unproject(camera);
+    pointerRayDir.copy(pointerRayPoint).sub(camera.position).normalize();
+
+    if (Math.abs(pointerRayDir.z) < 0.0001) {
+        pointerRayDir.z = pointerRayDir.z < 0 ? -0.0001 : 0.0001;
+    }
+}
+
+function pointerAtZ(zValue, target) {
+    const t = (zValue - camera.position.z) / pointerRayDir.z;
+    target.set(
+        camera.position.x + pointerRayDir.x * t,
+        camera.position.y + pointerRayDir.y * t,
+        zValue
+    );
+    return target;
+}
+
+function updateBlackHole(delta, nowMs) {
+    const idleMs = nowMs - lastPointerMoveMs;
+    let targetRadius = 0;
+    let targetPower = 0;
+
+    if (pointerInside) {
+        const growProgress = THREE.MathUtils.clamp(
+            (idleMs - BLACKHOLE_GROW_START_MS) / (BLACKHOLE_GROW_FULL_MS - BLACKHOLE_GROW_START_MS),
+            0,
+            1
+        );
+        const smoothGrow = growProgress * growProgress * (3 - 2 * growProgress);
+        targetRadius = THREE.MathUtils.lerp(MIN_BLACKHOLE_RADIUS, MAX_BLACKHOLE_RADIUS, smoothGrow);
+
+        const powerSeconds = Math.max(0, (idleMs - BLACKHOLE_POWER_START_MS) / 1000);
+        targetPower = Math.min(BLACKHOLE_POWER_MAX, powerSeconds * BLACKHOLE_POWER_RATE);
+    }
+
+    if (blackHolePulse > 0) {
+        targetRadius += blackHolePulse;
+        blackHolePulse = Math.max(0, blackHolePulse - 1.8 * delta);
+    }
+
+    blackHoleRadius = THREE.MathUtils.lerp(blackHoleRadius, targetRadius, 0.05 * delta);
+    const powerLerp = targetPower < blackHolePower ? 0.34 : 0.06;
+    blackHolePower = THREE.MathUtils.lerp(blackHolePower, targetPower, powerLerp * delta);
+    pointerSmoothNDC.lerp(pointerTargetNDC, BLACKHOLE_LERP * delta);
+    updatePointerRay();
+
+    pointerAtZ(3, pointerWorld);
+
+    const visualRadius = Math.max(0.001, blackHoleRadius);
+    blackHoleCore.visible = visualRadius > 0.04;
+
+    blackHoleCore.position.copy(pointerWorld);
+
+    blackHoleCore.quaternion.copy(camera.quaternion);
+
+    blackHoleCore.scale.set(visualRadius, visualRadius, 1);
+}
+
+function updateStars(delta) {
+    const positions = starPositions;
+    const hasInfluence = blackHoleRadius > 0.5;
+
+    const cameraX = camera.position.x;
+    const cameraY = camera.position.y;
+    const cameraZ = camera.position.z;
+    const rayX = pointerRayDir.x;
+    const rayY = pointerRayDir.y;
+    const rayZ = pointerRayDir.z;
+
+    const influenceRadius = blackHoleRadius * STAR_INFLUENCE_MULT * (1 + blackHolePower * 0.22);
+    const influenceRadiusSq = influenceRadius * influenceRadius;
+    const horizonRadius = blackHoleRadius * STAR_HORIZON_MULT * (1 + blackHolePower * 0.1);
+    const captureRadius = horizonRadius * STAR_HORIZON_CAPTURE_MULT;
+    const gravityStrength = STAR_GRAVITY_BASE * (1 + blackHolePower * 1.28);
+    const pullForceBase = STAR_PULL_FORCE * (1 + blackHolePower * 0.72);
+    const swirlForceBase = STAR_SWIRL_FORCE * (1 + blackHolePower * 0.46);
+    const drag = Math.pow(STAR_DRAG, delta);
+
+    for (let i = 0; i < starCount; i += 1) {
+        const index3 = i * 3;
+        let x = positions[index3];
+        let y = positions[index3 + 1];
+        let z = positions[index3 + 2];
+        let vx = starVelX[i];
+        let vy = starVelY[i];
+
+        z += STAR_SPEED_Z * starDrift[i] * delta;
+
+        if (z > 620) {
+            resetStar(index3, true, i);
+            x = positions[index3];
+            y = positions[index3 + 1];
+            z = positions[index3 + 2];
+        }
+
+        if (hasInfluence) {
+            const t = (z - cameraZ) / rayZ;
+            const mouseX = cameraX + rayX * t;
+            const mouseY = cameraY + rayY * t;
+            const dx = x - mouseX;
+            const dy = y - mouseY;
+            const distSq = dx * dx + dy * dy;
+
+            if (distSq < influenceRadiusSq) {
+                const dist = Math.sqrt(distSq) + 0.0001;
+                if (dist < captureRadius) {
+                    resetStar(index3, true, i);
+                    x = positions[index3];
+                    y = positions[index3 + 1];
+                    z = positions[index3 + 2];
+                    vx = starVelX[i];
+                    vy = starVelY[i];
+                    positions[index3] = x;
+                    positions[index3 + 1] = y;
+                    positions[index3 + 2] = z;
+                    continue;
+                }
+
+                const nx = dx / dist;
+                const ny = dy / dist;
+                const falloff = 1 - dist / influenceRadius;
+                const inverseDistSq = 1 / (distSq + 14);
+                const radialForce = gravityStrength * inverseDistSq * (0.38 + falloff * falloff * 2.6);
+                const horizonBoost = 1 + Math.pow(horizonRadius / Math.max(dist, horizonRadius), 2.25) * 2.3;
+
+                if (isRightPointerDown) {
+                    const pushForce = radialForce * STAR_PUSH_FORCE;
+                    vx += nx * pushForce * delta;
+                    vy += ny * pushForce * delta;
+                } else {
+                    const tx = -ny;
+                    const ty = nx;
+                    const orbitBias = THREE.MathUtils.clamp(1 - dist / influenceRadius, 0, 1);
+                    const pullForce = radialForce * pullForceBase * (1 + orbitBias * 0.55) * horizonBoost;
+                    const swirlDampNearCore = THREE.MathUtils.clamp((dist - captureRadius) / (influenceRadius - captureRadius + 0.0001), 0, 1);
+                    const swirlForce = radialForce * swirlForceBase * (0.35 + orbitBias * 0.95) * swirlDampNearCore;
+
+                    vx += (-nx * pullForce + tx * swirlForce) * delta;
+                    vy += (-ny * pullForce + ty * swirlForce) * delta;
+                }
+            }
+        }
+
+        vx *= drag;
+        vy *= drag;
+        x += vx * delta;
+        y += vy * delta;
+
+        starVelX[i] = vx;
+        starVelY[i] = vy;
+        positions[index3] = x;
+        positions[index3 + 1] = y;
+        positions[index3 + 2] = z;
+    }
+
+    stars.geometry.attributes.position.needsUpdate = true;
+}
+
+function updateFoodMeshes(delta) {
+    const hasInfluence = blackHoleRadius > 0.5;
+
+    const cameraX = camera.position.x;
+    const cameraY = camera.position.y;
+    const cameraZ = camera.position.z;
+    const rayX = pointerRayDir.x;
+    const rayY = pointerRayDir.y;
+    const rayZ = pointerRayDir.z;
+
+    const influenceRadius = blackHoleRadius * FOOD_INFLUENCE_MULT * (1 + blackHolePower * 0.24);
+    const influenceRadiusSq = influenceRadius * influenceRadius;
+    const horizonRadius = blackHoleRadius * FOOD_HORIZON_MULT * (1 + blackHolePower * 0.12);
+    const captureRadius = horizonRadius * FOOD_HORIZON_CAPTURE_MULT;
+    const gravityStrength = FOOD_GRAVITY_BASE * (1 + blackHolePower * 1.2);
+    const pullForceBase = FOOD_PULL_FORCE * (1 + blackHolePower * 0.75);
+    const swirlForceBase = FOOD_SWIRL_FORCE * (1 + blackHolePower * 0.5);
+    const flowSpeedMul = 1 + blackHolePower * FOOD_FLOW_POWER_MULT;
+    const drag = Math.pow(FOOD_DRAG, delta);
+
+    for (let i = foodMeshes.length - 1; i >= 0; i -= 1) {
+        const mesh = foodMeshes[i];
+        const state = mesh.userData;
+
+        let ax = 0;
+        let ay = 0;
+
+        if (hasInfluence) {
+            const t = (mesh.position.z - cameraZ) / rayZ;
+            const mouseX = cameraX + rayX * t;
+            const mouseY = cameraY + rayY * t;
+            const dx = mesh.position.x - mouseX;
+            const dy = mesh.position.y - mouseY;
+            const distSq = dx * dx + dy * dy;
+
+            if (distSq < influenceRadiusSq) {
+                const dist = Math.sqrt(distSq) + 0.0001;
+                if (dist < captureRadius) {
+                    removeFoodAt(i);
+                    continue;
+                }
+
+                const nx = dx / dist;
+                const ny = dy / dist;
+                const tx = -ny;
+                const ty = nx;
+                const falloff = 1 - dist / influenceRadius;
+                const inverseDistSq = 1 / (distSq + 16);
+                const radialForce = gravityStrength * inverseDistSq * (0.34 + falloff * falloff * 2.5);
+                const horizonBoost = 1 + Math.pow(horizonRadius / Math.max(dist, horizonRadius), 2.2) * 2.1;
+
+                if (isRightPointerDown) {
+                    const pushForce = radialForce * FOOD_PUSH_FORCE;
+                    ax += nx * pushForce;
+                    ay += ny * pushForce;
+                } else {
+                    const orbitBias = THREE.MathUtils.clamp(1 - dist / influenceRadius, 0, 1);
+                    const pullForce = radialForce * pullForceBase * (1 + orbitBias * 0.52) * horizonBoost;
+                    const swirlDampNearCore = THREE.MathUtils.clamp((dist - captureRadius) / (influenceRadius - captureRadius + 0.0001), 0, 1);
+                    const swirlForce = radialForce * swirlForceBase * (0.3 + orbitBias * 0.98) * swirlDampNearCore;
+
+                    ax += -nx * pullForce + tx * swirlForce;
+                    ay += -ny * pullForce + ty * swirlForce;
+                    state.captured = true;
+                }
+            } else if (state.captured) {
+                state.captured = false;
+            }
+        }
+
+        state.vx = (state.vx + ax * delta) * drag;
+        state.vy = (state.vy + ay * delta) * drag;
+
+        mesh.position.x += state.vx * delta;
+        mesh.position.y += FOOD_SPEED_Y * flowSpeedMul * delta + state.vy * delta;
+        mesh.position.z -= FOOD_SPEED_Z * flowSpeedMul * delta;
+
+        mesh.rotation.z += 0.002 * delta + Math.abs(state.vx) * 0.014;
+
+        mesh.material.opacity = THREE.MathUtils.clamp((mesh.position.z + 620) / 640, 0, 0.96);
+
+        if (mesh.position.z < -620 || mesh.position.y > 300) {
+            removeFoodAt(i);
+        }
+    }
+}
+
+function updateConstellation(nowMs) {
+    if (!constellationGroup || !constellationPointsMaterial) {
+        return;
+    }
+
+    const pulse = 0.2 + Math.sin(nowMs * 0.00028) * 0.025;
+    constellationPointsMaterial.opacity = pulse;
+    if (constellationLineMaterial) {
+        constellationLineMaterial.opacity = Math.max(0.09, pulse * 0.66);
+    }
+
+    constellationGroup.position.y = 10 + Math.sin(nowMs * 0.00011) * 1.8;
+}
+
+function animate(nowMs = performance.now()) {
+    requestAnimationFrame(animate);
+
+    const frameDeltaMs = nowMs - lastFrameMs;
+    lastFrameMs = nowMs;
+    const delta = Math.min(frameDeltaMs / 16.666, 2.4);
+
+    updateBlackHole(delta, nowMs);
+
+    const dynamicSpawnInterval = Math.max(
+        FOOD_MIN_SPAWN_INTERVAL_MS,
+        FOOD_SPAWN_INTERVAL_MS / (1 + blackHolePower * FOOD_SPAWN_POWER_MULT)
+    );
+    const maxBacklog = dynamicSpawnInterval * (SPAWN_MAX_PER_FRAME + 1);
+    spawnAccumulatorMs = Math.min(spawnAccumulatorMs + frameDeltaMs, maxBacklog);
+
+    let spawnsThisFrame = 0;
+    while (spawnAccumulatorMs >= dynamicSpawnInterval && spawnsThisFrame < SPAWN_MAX_PER_FRAME) {
+        spawnAccumulatorMs -= dynamicSpawnInterval;
+        spawnFoodRow();
+        spawnsThisFrame += 1;
+    }
+    if (spawnsThisFrame >= SPAWN_MAX_PER_FRAME && spawnAccumulatorMs >= dynamicSpawnInterval) {
+        // Eski backlog'u biriktirmeden akışa geri dön.
+        spawnAccumulatorMs = dynamicSpawnInterval * 0.35;
+    }
+
+    updateStars(delta);
+    updateFoodMeshes(delta);
+    updateConstellation(nowMs);
+
+    renderer.render(scene, camera);
+}
+
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
 } else {
-    init3D();
-    animate();
+    init();
 }
