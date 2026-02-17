@@ -2953,11 +2953,6 @@ function updateConstellation(nowMs) {
         constellationGroup.scale.set(CONSTELLATION_SCALE * scaleMul, CONSTELLATION_SCALE * scaleMul, 1);
         constellationGroup.rotation.x = -0.02 + collapse * 0.4;
         constellationGroup.rotation.z = -0.006 + collapse * 0.34;
-    } else {
-        constellationGroup.position.copy(constellationBasePosition);
-        constellationGroup.scale.set(CONSTELLATION_SCALE, CONSTELLATION_SCALE, 1);
-        constellationGroup.rotation.x = -0.02;
-        constellationGroup.rotation.z = -0.006;
     }
 }
 
