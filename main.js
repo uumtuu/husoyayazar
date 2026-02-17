@@ -17,7 +17,7 @@ const foods = [
     "ıslak hamburger"
 ];
 
-const BUILD_ID = "20260217-constellation-v8-fullscreen-background-blend";
+const BUILD_ID = "20260217-constellation-v9-nebula-lensing-fade";
 
 const BASE_STAR_COUNT = 22000;
 const MIN_STAR_COUNT = 7000;
@@ -31,6 +31,10 @@ const DEEP_STAR_FIELD_WIDTH = STAR_FIELD_WIDTH * 1.8;
 const DEEP_STAR_FIELD_HEIGHT = STAR_FIELD_HEIGHT * 1.7;
 const DEEP_STAR_FIELD_DEPTH = STAR_FIELD_DEPTH * 1.45;
 const DEEP_STAR_SPEED_Z = 0.22;
+const NEBULA_LAYER_COUNT = 5;
+const NEBULA_BASE_Z = -980;
+const NEBULA_SPREAD_Z = 340;
+const NEBULA_BASE_SCALE = 760;
 
 const FOOD_SPEED_Z = 0.55;
 const FOOD_SPEED_Y = 0.30;
@@ -50,6 +54,9 @@ const BLACKHOLE_POWER_MAX = 4.2;
 const TOUCH_HOLD_MS = 420;
 const POWER_RESET_THRESHOLD_MOUSE_PX = 3;
 const POWER_RESET_THRESHOLD_TOUCH_PX = 9;
+const BLACKHOLE_LENS_SCALE_MULT = 2.65;
+const BLACKHOLE_LENS_OPACITY_BASE = 0.085;
+const BLACKHOLE_LENS_OPACITY_POWER_MULT = 0.11;
 
 const STAR_INFLUENCE_MULT = 2.9;
 const STAR_MIN_INFLUENCE_RADIUS = 22;
@@ -85,6 +92,9 @@ const CONSTELLATION_MOUTH_TARGET_Y = 6;
 const CONSTELLATION_FADE_MS = 980;
 const CONSTELLATION_NODE_LINK_DISTANCE = 23.5;
 const CONSTELLATION_MAX_LINKS_PER_NODE = 3;
+const CONSTELLATION_DEPTH_JITTER = 16;
+const CONSTELLATION_LINE_DEPTH_SPLIT_Z = -190;
+const CONSTELLATION_FAR_LINE_OPACITY_MULT = 0.5;
 
 let scene;
 let camera;
@@ -101,6 +111,7 @@ let deepStarPositions;
 let deepStarDrift;
 
 let blackHoleCore;
+let blackHoleLensing;
 let blackHoleRadius = MIN_BLACKHOLE_RADIUS;
 let blackHolePulse = 0;
 let blackHolePower = 0;
@@ -109,8 +120,11 @@ let constellationGroup;
 let constellationDustMaterial;
 let constellationNodeMaterial;
 let constellationLineMaterial;
+let constellationLineFarMaterial;
 let constellationReadyAtMs = 0;
 const constellationBasePosition = new THREE.Vector3();
+let nebulaGroup;
+let nebulaLayers = [];
 
 let foodMeshes = [];
 let maxActiveFood = FOOD_MAX_ACTIVE;
@@ -190,6 +204,7 @@ function init() {
     loadConstellationFromImage("husospace.png");
     createStars();
     createDeepStars();
+    createNebulaLayer();
     createBlackHoleVisual();
 
     for (let i = 0; i < 4; i += 1) {
@@ -426,6 +441,94 @@ function resetDeepStar(index3, moveToBack) {
     }
 }
 
+function createNebulaTexture(seedOffset = 0) {
+    const size = 512;
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const context = canvas.getContext("2d");
+
+    let seed = (0x8f17a39 ^ (seedOffset * 0x9e3779b9)) >>> 0;
+    const seededRandom = () => {
+        seed = (seed * 1664525 + 1013904223) >>> 0;
+        return seed / 4294967295;
+    };
+
+    context.clearRect(0, 0, size, size);
+    const patches = 140;
+    for (let i = 0; i < patches; i += 1) {
+        const x = seededRandom() * size;
+        const y = seededRandom() * size;
+        const radius = 18 + seededRandom() * 110;
+        const alpha = 0.015 + seededRandom() * 0.055;
+        const hue = 198 + seededRandom() * 36;
+        const saturation = 38 + seededRandom() * 22;
+        const lightness = 42 + seededRandom() * 18;
+
+        const gradient = context.createRadialGradient(x, y, 0, x, y, radius);
+        gradient.addColorStop(0, `hsla(${hue}, ${saturation}%, ${lightness}%, ${alpha})`);
+        gradient.addColorStop(1, "rgba(0,0,0,0)");
+        context.fillStyle = gradient;
+        context.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    return texture;
+}
+
+function createNebulaLayer() {
+    if (nebulaGroup) {
+        nebulaGroup.traverse((child) => {
+            if (child.material) {
+                if (child.material.map) {
+                    child.material.map.dispose();
+                }
+                child.material.dispose();
+            }
+        });
+        scene.remove(nebulaGroup);
+    }
+
+    nebulaGroup = new THREE.Group();
+    nebulaLayers = [];
+
+    for (let i = 0; i < NEBULA_LAYER_COUNT; i += 1) {
+        const texture = createNebulaTexture(i + 1);
+        const material = new THREE.SpriteMaterial({
+            map: texture,
+            transparent: true,
+            opacity: 0.06 + Math.random() * 0.05,
+            depthWrite: false,
+            depthTest: true,
+            blending: THREE.NormalBlending
+        });
+
+        const sprite = new THREE.Sprite(material);
+        const scale = NEBULA_BASE_SCALE * (0.82 + Math.random() * 0.58);
+        sprite.scale.set(scale, scale * (0.58 + Math.random() * 0.36), 1);
+        sprite.position.set(
+            (Math.random() - 0.5) * STAR_FIELD_WIDTH * 1.4,
+            (Math.random() - 0.5) * STAR_FIELD_HEIGHT * 1.2,
+            NEBULA_BASE_Z - Math.random() * NEBULA_SPREAD_Z
+        );
+        sprite.renderOrder = -1;
+        sprite.userData = {
+            baseX: sprite.position.x,
+            baseY: sprite.position.y,
+            driftX: 0.35 + Math.random() * 0.9,
+            driftY: 0.3 + Math.random() * 0.75,
+            phase: Math.random() * Math.PI * 2,
+            baseOpacity: material.opacity
+        };
+        nebulaLayers.push(sprite);
+        nebulaGroup.add(sprite);
+    }
+
+    scene.add(nebulaGroup);
+}
+
 function createBlackHoleTexture() {
     const size = 256;
     const canvas = document.createElement("canvas");
@@ -456,8 +559,39 @@ function createBlackHoleTexture() {
     return texture;
 }
 
+function createBlackHoleLensingTexture() {
+    const size = 256;
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const context = canvas.getContext("2d");
+
+    const gradient = context.createRadialGradient(
+        size / 2,
+        size / 2,
+        0,
+        size / 2,
+        size / 2,
+        size / 2
+    );
+    gradient.addColorStop(0, "rgba(0,0,0,0)");
+    gradient.addColorStop(0.44, "rgba(0,0,0,0)");
+    gradient.addColorStop(0.6, "rgba(8,8,8,0.12)");
+    gradient.addColorStop(0.75, "rgba(150,190,255,0.13)");
+    gradient.addColorStop(0.88, "rgba(20,20,24,0.05)");
+    gradient.addColorStop(1, "rgba(0,0,0,0)");
+
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, size, size);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter;
+    return texture;
+}
+
 function createBlackHoleVisual() {
     const holeTexture = createBlackHoleTexture();
+    const lensTexture = createBlackHoleLensingTexture();
     blackHoleCore = new THREE.Mesh(
         new THREE.PlaneGeometry(2, 2),
         new THREE.MeshBasicMaterial({
@@ -470,6 +604,20 @@ function createBlackHoleVisual() {
     blackHoleCore.renderOrder = 100;
     blackHoleCore.position.set(0, 0, 3);
     scene.add(blackHoleCore);
+
+    blackHoleLensing = new THREE.Mesh(
+        new THREE.PlaneGeometry(2, 2),
+        new THREE.MeshBasicMaterial({
+            map: lensTexture,
+            transparent: true,
+            depthWrite: false,
+            depthTest: false
+        })
+    );
+    blackHoleLensing.renderOrder = 99;
+    blackHoleLensing.position.set(0, 0, 3);
+    blackHoleLensing.visible = false;
+    scene.add(blackHoleLensing);
 }
 
 function loadConstellationFromImage(imageUrl) {
@@ -609,7 +757,7 @@ function buildConstellation(image) {
 
             const wx = (x / (scanWidth - 1) - 0.5) * worldWidth;
             const wy = (0.5 - y / (scanHeight - 1)) * worldHeight;
-            const wz = -190 + (Math.random() - 0.5) * 3.4;
+            const wz = -190 + (Math.random() - 0.5) * (CONSTELLATION_DEPTH_JITTER * 2);
             dustTriples.push(wx, wy, wz);
 
             const nodeChance = THREE.MathUtils.clamp(0.24 + brightnessBoost * 0.46, 0.18, 0.82);
@@ -631,6 +779,15 @@ function buildConstellation(image) {
 
     const nodeCount = Math.floor(nodeTriples.length / 3);
     const lineTriples = [];
+    const lineTriplesFar = [];
+    const pushLine = (ax, ay, az, bx, by, bz) => {
+        const midpointZ = (az + bz) * 0.5;
+        if (midpointZ < CONSTELLATION_LINE_DEPTH_SPLIT_Z) {
+            lineTriplesFar.push(ax, ay, az, bx, by, bz);
+            return;
+        }
+        lineTriples.push(ax, ay, az, bx, by, bz);
+    };
     const cellSize = CONSTELLATION_NODE_LINK_DISTANCE;
     const maxDistSq = cellSize * cellSize;
     const linkCounts = new Uint8Array(nodeCount);
@@ -708,7 +865,7 @@ function buildConstellation(image) {
             const by = nodeTriples[j * 3 + 1];
             const bz = nodeTriples[j * 3 + 2];
 
-            lineTriples.push(ax, ay, az, bx, by, bz);
+            pushLine(ax, ay, az, bx, by, bz);
             linkCounts[i] += 1;
             linkCounts[j] += 1;
         }
@@ -751,7 +908,7 @@ function buildConstellation(image) {
             const bx = nodeTriples[bestJ * 3];
             const by = nodeTriples[bestJ * 3 + 1];
             const bz = nodeTriples[bestJ * 3 + 2];
-            lineTriples.push(ax, ay, az, bx, by, bz);
+            pushLine(ax, ay, az, bx, by, bz);
             linkCounts[i] += 1;
             linkCounts[bestJ] += 1;
         }
@@ -774,6 +931,10 @@ function buildConstellation(image) {
     if (constellationLineMaterial) {
         constellationLineMaterial.dispose();
         constellationLineMaterial = null;
+    }
+    if (constellationLineFarMaterial) {
+        constellationLineFarMaterial.dispose();
+        constellationLineFarMaterial = null;
     }
 
     constellationGroup = new THREE.Group();
@@ -824,6 +985,22 @@ function buildConstellation(image) {
         const lines = new THREE.LineSegments(lineGeometry, constellationLineMaterial);
         lines.renderOrder = 1;
         constellationGroup.add(lines);
+    }
+
+    if (lineTriplesFar.length > 0) {
+        const lineGeometryFar = new THREE.BufferGeometry();
+        lineGeometryFar.setAttribute("position", new THREE.Float32BufferAttribute(lineTriplesFar, 3));
+        constellationLineFarMaterial = new THREE.LineBasicMaterial({
+            color: 0xafc3d8,
+            transparent: true,
+            opacity: 0,
+            depthWrite: false,
+            depthTest: true,
+            blending: THREE.NormalBlending
+        });
+        const farLines = new THREE.LineSegments(lineGeometryFar, constellationLineFarMaterial);
+        farLines.renderOrder = 0;
+        constellationGroup.add(farLines);
     }
 
     const mouthLocalX = (CONSTELLATION_MOUTH_U - 0.5) * worldWidth;
@@ -983,6 +1160,20 @@ function updateBlackHole(delta, nowMs) {
     blackHoleCore.quaternion.copy(camera.quaternion);
 
     blackHoleCore.scale.set(visualRadius, visualRadius, 1);
+
+    if (blackHoleLensing) {
+        blackHoleLensing.visible = visualRadius > 0.06;
+        blackHoleLensing.position.copy(pointerWorld);
+        blackHoleLensing.quaternion.copy(camera.quaternion);
+
+        const lensRadius = visualRadius * BLACKHOLE_LENS_SCALE_MULT * (1 + blackHolePower * 0.12);
+        blackHoleLensing.scale.set(lensRadius, lensRadius, 1);
+        blackHoleLensing.material.opacity = THREE.MathUtils.clamp(
+            BLACKHOLE_LENS_OPACITY_BASE + blackHolePower * BLACKHOLE_LENS_OPACITY_POWER_MULT,
+            0,
+            0.34
+        );
+    }
 }
 
 function updateDeepStars(delta) {
@@ -1000,6 +1191,20 @@ function updateDeepStars(delta) {
     }
 
     deepStars.geometry.attributes.position.needsUpdate = true;
+}
+
+function updateNebula(nowMs) {
+    if (!nebulaLayers.length) {
+        return;
+    }
+
+    for (let i = 0; i < nebulaLayers.length; i += 1) {
+        const layer = nebulaLayers[i];
+        const state = layer.userData;
+        layer.position.x = state.baseX + Math.sin(nowMs * 0.00002 * state.driftX + state.phase) * 14;
+        layer.position.y = state.baseY + Math.sin(nowMs * 0.000024 * state.driftY + state.phase * 1.3) * 10;
+        layer.material.opacity = state.baseOpacity * (0.82 + Math.sin(nowMs * 0.00012 + state.phase) * 0.14);
+    }
 }
 
 function updateStars(delta) {
@@ -1209,8 +1414,12 @@ function updateConstellation(nowMs) {
     constellationDustMaterial.opacity = (0.045 + pulse * 0.014) * fadeProgress;
     constellationNodeMaterial.opacity = (0.12 + pulse * 0.028) * fadeProgress;
 
+    const nearLineOpacity = (0.05 + pulse * 0.016) * fadeProgress;
     if (constellationLineMaterial) {
-        constellationLineMaterial.opacity = (0.05 + pulse * 0.016) * fadeProgress;
+        constellationLineMaterial.opacity = nearLineOpacity;
+    }
+    if (constellationLineFarMaterial) {
+        constellationLineFarMaterial.opacity = nearLineOpacity * CONSTELLATION_FAR_LINE_OPACITY_MULT;
     }
 
     constellationGroup.position.x = constellationBasePosition.x + Math.sin(nowMs * 0.00006) * 1.0;
@@ -1245,6 +1454,7 @@ function animate(nowMs = performance.now()) {
         spawnAccumulatorMs = dynamicSpawnInterval * 0.35;
     }
 
+    updateNebula(nowMs);
     updateDeepStars(delta);
     updateStars(delta);
     updateFoodMeshes(delta);
