@@ -17,7 +17,7 @@ const foods = [
     "ıslak hamburger"
 ];
 
-const BUILD_ID = "20260217-constellation-v6-mouth-aligned";
+const BUILD_ID = "20260217-constellation-v7-detailed-scale-up";
 
 const BASE_STAR_COUNT = 22000;
 const MIN_STAR_COUNT = 7000;
@@ -68,17 +68,17 @@ const FOOD_GRAVITY_BASE = 58;
 const FOOD_DRAG = 0.86;
 const FOOD_HORIZON_CAPTURE_MULT = 1.1;
 
-const CONSTELLATION_SCAN_MAX_WIDTH = 420;
-const CONSTELLATION_WORLD_WIDTH = 300;
-const CONSTELLATION_SCALE = 1.78;
+const CONSTELLATION_SCAN_MAX_WIDTH = 560;
+const CONSTELLATION_WORLD_WIDTH = 340;
+const CONSTELLATION_SCALE = 2.28;
 const CONSTELLATION_TARGET_Z = -165;
 const CONSTELLATION_MOUTH_U = 0.505;
 const CONSTELLATION_MOUTH_V = 0.358;
 const CONSTELLATION_MOUTH_TARGET_X = 0;
 const CONSTELLATION_MOUTH_TARGET_Y = 6;
 const CONSTELLATION_FADE_MS = 980;
-const CONSTELLATION_NODE_LINK_DISTANCE = 19.5;
-const CONSTELLATION_MAX_LINKS_PER_NODE = 2;
+const CONSTELLATION_NODE_LINK_DISTANCE = 23.5;
+const CONSTELLATION_MAX_LINKS_PER_NODE = 3;
 
 let scene;
 let camera;
@@ -478,8 +478,8 @@ function buildConstellation(image) {
         lum[i] = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
     }
 
-    const lumThreshold = luminancePercentile(lum, 0.978);
-    const contrastThreshold = 0.0135;
+    const lumThreshold = luminancePercentile(lum, 0.972);
+    const contrastThreshold = 0.0105;
     const rawMask = new Uint8Array(pixelCount);
 
     for (let y = 0; y < scanHeight; y += 1) {
@@ -552,7 +552,7 @@ function buildConstellation(image) {
 
             const hash = ((x * 73856093) ^ (y * 19349663) ^ ((x + y) * 83492791)) >>> 0;
             const brightnessBoost = THREE.MathUtils.clamp((lum[idx] - lumThreshold) * 6.2, 0, 1);
-            const dustChance = THREE.MathUtils.clamp(0.4 + brightnessBoost * 0.38, 0.28, 0.86);
+            const dustChance = THREE.MathUtils.clamp(0.56 + brightnessBoost * 0.34, 0.42, 0.95);
             if ((hash % 1000) / 1000 > dustChance) {
                 continue;
             }
@@ -562,7 +562,7 @@ function buildConstellation(image) {
             const wz = -190 + (Math.random() - 0.5) * 3.4;
             dustTriples.push(wx, wy, wz);
 
-            const nodeChance = THREE.MathUtils.clamp(0.14 + brightnessBoost * 0.42, 0.1, 0.62);
+            const nodeChance = THREE.MathUtils.clamp(0.24 + brightnessBoost * 0.46, 0.18, 0.82);
             if (((hash >>> 11) % 1000) / 1000 <= nodeChance) {
                 nodeTriples.push(
                     wx + (Math.random() - 0.5) * 1.1,
@@ -575,7 +575,7 @@ function buildConstellation(image) {
         }
     }
 
-    if (dustTriples.length < 140 || nodeTriples.length < 90) {
+    if (dustTriples.length < 220 || nodeTriples.length < 140) {
         return;
     }
 
@@ -648,7 +648,7 @@ function buildConstellation(image) {
                 continue;
             }
 
-            const keepChance = THREE.MathUtils.clamp(0.82 - (distSq / maxDistSq) * 0.5, 0.3, 0.82);
+            const keepChance = THREE.MathUtils.clamp(0.9 - (distSq / maxDistSq) * 0.32, 0.45, 0.92);
             const pairHash = (((i + 1) * 73856093) ^ ((j + 1) * 19349663)) >>> 0;
             if ((pairHash % 1000) / 1000 > keepChance) {
                 continue;
@@ -661,6 +661,49 @@ function buildConstellation(image) {
             lineTriples.push(ax, ay, az, bx, by, bz);
             linkCounts[i] += 1;
             linkCounts[j] += 1;
+        }
+    }
+
+    const extendedMaxDistSq = maxDistSq * 2.25;
+    for (let i = 0; i < nodeCount; i += 1) {
+        if (linkCounts[i] > 0) {
+            continue;
+        }
+
+        const ax = nodeTriples[i * 3];
+        const ay = nodeTriples[i * 3 + 1];
+        const az = nodeTriples[i * 3 + 2];
+
+        let bestJ = -1;
+        let bestDistSq = Infinity;
+        for (let j = 0; j < nodeCount; j += 1) {
+            if (j === i) {
+                continue;
+            }
+            if (linkCounts[j] >= CONSTELLATION_MAX_LINKS_PER_NODE) {
+                continue;
+            }
+            const bx = nodeTriples[j * 3];
+            const by = nodeTriples[j * 3 + 1];
+            const dx = bx - ax;
+            const dy = by - ay;
+            const distSq = dx * dx + dy * dy;
+            if (distSq < 1.2 || distSq > extendedMaxDistSq) {
+                continue;
+            }
+            if (distSq < bestDistSq) {
+                bestDistSq = distSq;
+                bestJ = j;
+            }
+        }
+
+        if (bestJ >= 0) {
+            const bx = nodeTriples[bestJ * 3];
+            const by = nodeTriples[bestJ * 3 + 1];
+            const bz = nodeTriples[bestJ * 3 + 2];
+            lineTriples.push(ax, ay, az, bx, by, bz);
+            linkCounts[i] += 1;
+            linkCounts[bestJ] += 1;
         }
     }
 
@@ -689,7 +732,7 @@ function buildConstellation(image) {
     dustGeometry.setAttribute("position", new THREE.Float32BufferAttribute(dustTriples, 3));
     constellationDustMaterial = new THREE.PointsMaterial({
         color: 0xffffff,
-        size: 1.16,
+        size: 1.24,
         sizeAttenuation: true,
         transparent: true,
         opacity: 0,
@@ -705,7 +748,7 @@ function buildConstellation(image) {
     nodeGeometry.setAttribute("position", new THREE.Float32BufferAttribute(nodeTriples, 3));
     constellationNodeMaterial = new THREE.PointsMaterial({
         color: 0xeaf5ff,
-        size: 2.35,
+        size: 2.55,
         sizeAttenuation: true,
         transparent: true,
         opacity: 0,
@@ -1096,11 +1139,11 @@ function updateConstellation(nowMs) {
         1
     );
     const pulse = 0.92 + Math.sin(nowMs * 0.0017) * 0.08;
-    constellationDustMaterial.opacity = (0.075 + pulse * 0.024) * fadeProgress;
-    constellationNodeMaterial.opacity = (0.24 + pulse * 0.055) * fadeProgress;
+    constellationDustMaterial.opacity = (0.09 + pulse * 0.03) * fadeProgress;
+    constellationNodeMaterial.opacity = (0.28 + pulse * 0.065) * fadeProgress;
 
     if (constellationLineMaterial) {
-        constellationLineMaterial.opacity = (0.11 + pulse * 0.03) * fadeProgress;
+        constellationLineMaterial.opacity = (0.15 + pulse * 0.045) * fadeProgress;
     }
 
     constellationGroup.position.x = constellationBasePosition.x + Math.sin(nowMs * 0.00007) * 1.3;
