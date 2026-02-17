@@ -17,7 +17,7 @@ const foods = [
     "ıslak hamburger"
 ];
 
-const BUILD_ID = "20260217-constellation-v9-nebula-lensing-fade";
+const BUILD_ID = "20260217-constellation-v11-husospace-static";
 
 const BASE_STAR_COUNT = 22000;
 const MIN_STAR_COUNT = 7000;
@@ -1464,10 +1464,9 @@ function updateConstellation(nowMs) {
     if (constellationLineFarMaterial) {
         constellationLineFarMaterial.opacity = nearLineOpacity * CONSTELLATION_FAR_LINE_OPACITY_MULT;
     }
-
-    constellationGroup.position.x = constellationBasePosition.x + Math.sin(nowMs * 0.00006) * 1.0;
-    constellationGroup.position.y = constellationBasePosition.y + Math.sin(nowMs * 0.00008) * 0.9;
-    constellationGroup.rotation.z = -0.006 + Math.sin(nowMs * 0.000045) * 0.011;
+    constellationGroup.position.copy(constellationBasePosition);
+    constellationGroup.rotation.x = -0.02;
+    constellationGroup.rotation.z = -0.006;
 }
 
 function animate(nowMs = performance.now()) {
