@@ -68,6 +68,11 @@ const BLACKHOLE_INNER_DISK_ROTATION_SPEED = -0.00142;
 const BLACKHOLE_PHOTON_RING_SCALE_MULT = 1.6;
 const BLACKHOLE_PHOTON_RING_OPACITY_BASE = 0.18;
 const BLACKHOLE_PHOTON_RING_OPACITY_POWER_MULT = 0.13;
+const SINGULARITY_IDLE_TRIGGER_MS = 20000;
+const SINGULARITY_RAMP_MS = 6400;
+const SINGULARITY_MAX_OVERLAY_OPACITY = 0.996;
+const SINGULARITY_PULL_FORCE = 240;
+const SINGULARITY_CAPTURE_RADIUS_MAX = 220;
 
 const STAR_INFLUENCE_MULT = 2.9;
 const STAR_MIN_INFLUENCE_RADIUS = 22;
@@ -195,9 +200,11 @@ let blackHoleLensing;
 let blackHoleAccretionDisk;
 let blackHoleAccretionInnerDisk;
 let blackHolePhotonRing;
+let singularityOverlay;
 let blackHoleRadius = MIN_BLACKHOLE_RADIUS;
 let blackHolePulse = 0;
 let blackHolePower = 0;
+let singularityCollapse = 0;
 
 let constellationGroup;
 let constellationDustMaterial;
@@ -231,6 +238,9 @@ const pointerSmoothNDC = new THREE.Vector2(0, 0);
 const pointerRayPoint = new THREE.Vector3();
 const pointerRayDir = new THREE.Vector3(0, 0, -1);
 const pointerWorld = new THREE.Vector3();
+const singularityVectorA = new THREE.Vector3();
+const singularityVectorB = new THREE.Vector3();
+const singularityCameraForward = new THREE.Vector3();
 const viewportSize = { width: 0, height: 0 };
 
 let pointerInside = false;
@@ -867,6 +877,7 @@ function clearPointerPushState() {
     touchHoldPointerId = null;
     touchHoldActivated = false;
     blackHolePower = 0;
+    singularityCollapse = 0;
     powerAnchorClientX = null;
     powerAnchorClientY = null;
 }
@@ -1417,6 +1428,20 @@ function createBlackHoleVisual() {
     blackHolePhotonRing.position.set(0, 0, 3);
     blackHolePhotonRing.visible = false;
     scene.add(blackHolePhotonRing);
+
+    singularityOverlay = new THREE.Mesh(
+        new THREE.PlaneGeometry(2, 2),
+        new THREE.MeshBasicMaterial({
+            color: 0x000000,
+            transparent: true,
+            opacity: 0,
+            depthWrite: false,
+            depthTest: false
+        })
+    );
+    singularityOverlay.renderOrder = 1200;
+    singularityOverlay.visible = false;
+    scene.add(singularityOverlay);
 }
 
 function createShootingStarTexture() {
@@ -1531,6 +1556,15 @@ function removeShootingStar(index) {
 }
 
 function updateShootingStars(delta, nowMs) {
+    const collapse = singularityCollapse;
+    const hasCollapse = collapse > 0.0001;
+    const cameraX = camera.position.x;
+    const cameraY = camera.position.y;
+    const cameraZ = camera.position.z;
+    const rayX = pointerRayDir.x;
+    const rayY = pointerRayDir.y;
+    const rayZ = pointerRayDir.z;
+
     if (shootingStars.length < SHOOTING_STAR_MAX_ACTIVE && nowMs >= nextShootingStarAtMs) {
         createShootingStar(nowMs);
         scheduleNextShootingStar(nowMs);
@@ -1551,11 +1585,28 @@ function updateShootingStars(delta, nowMs) {
         star.position.y += state.vy * delta;
         star.position.z += state.vz * delta;
 
+        if (hasCollapse) {
+            const t = (star.position.z - cameraZ) / rayZ;
+            const sinkX = cameraX + rayX * t;
+            const sinkY = cameraY + rayY * t;
+            const dx = star.position.x - sinkX;
+            const dy = star.position.y - sinkY;
+            const dist = Math.sqrt(dx * dx + dy * dy) + 0.0001;
+            const pull = (SINGULARITY_PULL_FORCE * (0.5 + collapse * 0.74)) / (dist + 14);
+            star.position.x += (-dx / dist) * pull * delta;
+            star.position.y += (-dy / dist) * pull * delta;
+
+            if (dist < 3 + collapse * 38) {
+                removeShootingStar(i);
+                continue;
+            }
+        }
+
         const fadeIn = THREE.MathUtils.clamp(lifeProgress / 0.18, 0, 1);
         const fadeOut = THREE.MathUtils.clamp((1 - lifeProgress) / 0.4, 0, 1);
         const flicker = 0.92 + Math.sin(nowMs * SHOOTING_STAR_FLICKER_SPEED + state.flickerPhase) * 0.08;
         const envelope = Math.min(fadeIn, fadeOut);
-        star.material.opacity = state.peakOpacity * envelope * flicker;
+        star.material.opacity = state.peakOpacity * envelope * flicker * (1 - collapse * 0.94);
         star.material.color.setHSL(state.hue, 0.4, 0.76 + envelope * 0.2);
         star.scale.set(
             0.84 + envelope * state.tailStretch,
@@ -2242,6 +2293,7 @@ function updateBlackHole(delta, nowMs) {
     const idleMs = nowMs - lastPointerMoveMs;
     let targetRadius = 0;
     let targetPower = 0;
+    let collapseTarget = 0;
 
     if (pointerInside) {
         const growProgress = THREE.MathUtils.clamp(
@@ -2254,11 +2306,28 @@ function updateBlackHole(delta, nowMs) {
 
         const powerSeconds = Math.max(0, (idleMs - BLACKHOLE_POWER_START_MS) / 1000);
         targetPower = Math.min(BLACKHOLE_POWER_MAX, powerSeconds * BLACKHOLE_POWER_RATE);
+
+        const collapseRaw = THREE.MathUtils.clamp(
+            (idleMs - SINGULARITY_IDLE_TRIGGER_MS) / SINGULARITY_RAMP_MS,
+            0,
+            1
+        );
+        collapseTarget = collapseRaw * collapseRaw * (3 - 2 * collapseRaw);
     }
+
+    const collapseLerp = collapseTarget > singularityCollapse ? 0.032 : 0.16;
+    singularityCollapse = THREE.MathUtils.lerp(singularityCollapse, collapseTarget, collapseLerp * delta);
 
     if (blackHolePulse > 0) {
         targetRadius += blackHolePulse;
         blackHolePulse = Math.max(0, blackHolePulse - 1.8 * delta);
+    }
+    if (singularityCollapse > 0.001) {
+        targetRadius += MAX_BLACKHOLE_RADIUS * 2.65 * singularityCollapse;
+        targetPower = Math.max(
+            targetPower,
+            BLACKHOLE_POWER_MAX * (0.38 + singularityCollapse * 0.92)
+        );
     }
 
     blackHoleRadius = THREE.MathUtils.lerp(blackHoleRadius, targetRadius, 0.05 * delta);
@@ -2270,34 +2339,41 @@ function updateBlackHole(delta, nowMs) {
     pointerAtZ(3, pointerWorld);
 
     const visualRadius = Math.max(0.001, blackHoleRadius);
-    const timePulse = 0.92 + Math.sin(nowMs * 0.0053 + blackHolePower * 0.8) * 0.08;
-    blackHoleCore.visible = visualRadius > 0.04;
+    const collapse = singularityCollapse;
+    const timePulse = 0.92 + Math.sin(nowMs * 0.0053 + blackHolePower * 0.8 + collapse * 2.1) * 0.08;
+    blackHoleCore.visible = visualRadius > 0.04 || collapse > 0.01;
 
     blackHoleCore.position.copy(pointerWorld);
     blackHoleCore.quaternion.copy(camera.quaternion);
-    blackHoleCore.scale.set(visualRadius * timePulse, visualRadius * timePulse, 1);
-    blackHoleCore.material.opacity = THREE.MathUtils.clamp(0.9 + blackHolePower * 0.05, 0, 1);
+    blackHoleCore.scale.set(
+        visualRadius * timePulse * (1 + collapse * 0.76),
+        visualRadius * timePulse * (1 + collapse * 0.76),
+        1
+    );
+    blackHoleCore.material.opacity = THREE.MathUtils.clamp(0.9 + blackHolePower * 0.05 + collapse * 0.16, 0, 1);
 
     if (blackHoleLensing) {
-        blackHoleLensing.visible = visualRadius > 0.06;
+        blackHoleLensing.visible = visualRadius > 0.06 || collapse > 0.02;
         blackHoleLensing.position.copy(pointerWorld);
         blackHoleLensing.quaternion.copy(camera.quaternion);
 
-        const lensRadius = visualRadius * BLACKHOLE_LENS_SCALE_MULT * (1 + blackHolePower * 0.12);
+        const lensRadius = visualRadius * BLACKHOLE_LENS_SCALE_MULT * (1 + blackHolePower * 0.12 + collapse * 0.45);
         blackHoleLensing.scale.set(lensRadius, lensRadius, 1);
         blackHoleLensing.material.opacity = THREE.MathUtils.clamp(
             (BLACKHOLE_LENS_OPACITY_BASE + blackHolePower * BLACKHOLE_LENS_OPACITY_POWER_MULT) *
-            (0.88 + Math.sin(nowMs * 0.0061) * 0.12),
+            (0.88 + Math.sin(nowMs * 0.0061) * 0.12) +
+            collapse * 0.24,
             0,
-            0.4
+            0.62
         );
     }
 
-    const diskVisible = visualRadius > 0.08;
+    const diskVisible = visualRadius > 0.08 || collapse > 0.03;
     const flatten = THREE.MathUtils.clamp(
         BLACKHOLE_DISK_FLATTEN_BASE +
         Math.sin(nowMs * 0.0018 + blackHolePower * 0.6) * 0.045 +
-        blackHolePower * BLACKHOLE_DISK_FLATTEN_POWER_MULT,
+        blackHolePower * BLACKHOLE_DISK_FLATTEN_POWER_MULT -
+        collapse * 0.08,
         0.52,
         0.92
     );
@@ -2311,15 +2387,15 @@ function updateBlackHole(delta, nowMs) {
             camera.rotation.z + nowMs * BLACKHOLE_DISK_ROTATION_SPEED
         );
 
-        const diskScale = visualRadius * BLACKHOLE_DISK_SCALE_MULT * (1 + blackHolePower * 0.2);
+        const diskScale = visualRadius * BLACKHOLE_DISK_SCALE_MULT * (1 + blackHolePower * 0.2 + collapse * 0.6);
         blackHoleAccretionDisk.scale.set(diskScale, diskScale * flatten, 1);
 
         const beaming = 0.5 + 0.5 * Math.sin(nowMs * 0.0029 + blackHolePower * 0.72);
         blackHoleAccretionDisk.material.opacity = THREE.MathUtils.clamp(
             (BLACKHOLE_DISK_OPACITY_BASE + blackHolePower * BLACKHOLE_DISK_OPACITY_POWER_MULT) *
-            (0.78 + beaming * 0.4),
+            (0.78 + beaming * 0.4 + collapse * 0.22),
             0,
-            0.8
+            0.92
         );
         blackHoleAccretionDisk.material.color.setRGB(
             1,
@@ -2337,13 +2413,13 @@ function updateBlackHole(delta, nowMs) {
             camera.rotation.z + nowMs * BLACKHOLE_INNER_DISK_ROTATION_SPEED
         );
 
-        const innerScale = visualRadius * BLACKHOLE_DISK_INNER_SCALE_MULT * (1 + blackHolePower * 0.18);
+        const innerScale = visualRadius * BLACKHOLE_DISK_INNER_SCALE_MULT * (1 + blackHolePower * 0.18 + collapse * 0.45);
         blackHoleAccretionInnerDisk.scale.set(innerScale, innerScale * (flatten * 0.9), 1);
         blackHoleAccretionInnerDisk.material.opacity = THREE.MathUtils.clamp(
             (BLACKHOLE_DISK_OPACITY_BASE * 0.9 + blackHolePower * BLACKHOLE_DISK_OPACITY_POWER_MULT * 0.78) *
-            (0.82 + Math.sin(nowMs * 0.0064 + 1.6) * 0.18),
+            (0.82 + Math.sin(nowMs * 0.0064 + 1.6) * 0.18 + collapse * 0.24),
             0,
-            0.74
+            0.9
         );
         blackHoleAccretionInnerDisk.material.color.setRGB(1, 0.9, 0.74 + Math.sin(nowMs * 0.0042) * 0.05);
     }
@@ -2357,13 +2433,35 @@ function updateBlackHole(delta, nowMs) {
             camera.rotation.z + Math.sin(nowMs * 0.0019) * 0.04
         );
 
-        const ringScale = visualRadius * BLACKHOLE_PHOTON_RING_SCALE_MULT * (1 + blackHolePower * 0.12);
+        const ringScale = visualRadius * BLACKHOLE_PHOTON_RING_SCALE_MULT * (1 + blackHolePower * 0.12 + collapse * 0.52);
         blackHolePhotonRing.scale.set(ringScale, ringScale * (0.9 + Math.sin(nowMs * 0.0022) * 0.04), 1);
         blackHolePhotonRing.material.opacity = THREE.MathUtils.clamp(
-            (BLACKHOLE_PHOTON_RING_OPACITY_BASE + blackHolePower * BLACKHOLE_PHOTON_RING_OPACITY_POWER_MULT) * timePulse,
+            (BLACKHOLE_PHOTON_RING_OPACITY_BASE + blackHolePower * BLACKHOLE_PHOTON_RING_OPACITY_POWER_MULT) *
+            timePulse *
+            (1 + collapse * 0.4),
             0,
-            0.72
+            0.94
         );
+    }
+
+    if (singularityOverlay) {
+        const overlayDistance = 0.35;
+        camera.getWorldDirection(singularityCameraForward);
+        singularityVectorA.copy(camera.position).addScaledVector(singularityCameraForward, overlayDistance);
+
+        const halfHeight = Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5)) * overlayDistance;
+        const halfWidth = halfHeight * camera.aspect;
+        singularityOverlay.position.copy(singularityVectorA);
+        singularityOverlay.quaternion.copy(camera.quaternion);
+        singularityOverlay.scale.set(halfWidth * 2.06, halfHeight * 2.06, 1);
+
+        const overlayOpacity = THREE.MathUtils.clamp(
+            Math.pow(collapse, 1.3) * SINGULARITY_MAX_OVERLAY_OPACITY,
+            0,
+            SINGULARITY_MAX_OVERLAY_OPACITY
+        );
+        singularityOverlay.material.opacity = overlayOpacity;
+        singularityOverlay.visible = overlayOpacity > 0.002;
     }
 }
 
@@ -2372,19 +2470,62 @@ function updateDeepStars(delta, nowMs) {
         return;
     }
 
+    const collapse = singularityCollapse;
+    const sceneDarkness = 1 - collapse * 0.97;
+    const hasCollapse = collapse > 0.0001;
+    const cameraX = camera.position.x;
+    const cameraY = camera.position.y;
+    const cameraZ = camera.position.z;
+    const rayX = pointerRayDir.x;
+    const rayY = pointerRayDir.y;
+    const rayZ = pointerRayDir.z;
+
     for (let i = 0; i < deepStarCount; i += 1) {
         const index3 = i * 3;
-        deepStarPositions[index3 + 2] += DEEP_STAR_SPEED_Z * deepStarDrift[i] * delta;
+        let x = deepStarPositions[index3];
+        let y = deepStarPositions[index3 + 1];
+        let z = deepStarPositions[index3 + 2] + DEEP_STAR_SPEED_Z * deepStarDrift[i] * delta;
 
-        if (deepStarPositions[index3 + 2] > 660) {
+        if (z > 660) {
             resetDeepStar(index3, true, i);
+            x = deepStarPositions[index3];
+            y = deepStarPositions[index3 + 1];
+            z = deepStarPositions[index3 + 2];
+        }
+
+        if (hasCollapse) {
+            const t = (z - cameraZ) / rayZ;
+            const sinkX = cameraX + rayX * t;
+            const sinkY = cameraY + rayY * t;
+            const dx = x - sinkX;
+            const dy = y - sinkY;
+            const dist = Math.sqrt(dx * dx + dy * dy) + 0.0001;
+            const pull = (SINGULARITY_PULL_FORCE * (0.34 + collapse * 0.56)) / (dist + 42);
+            x += (-dx / dist) * pull * delta;
+            y += (-dy / dist) * pull * delta;
+
+            const captureRadius = 4 + collapse * (SINGULARITY_CAPTURE_RADIUS_MAX * 0.09);
+            if (dist < captureRadius) {
+                resetDeepStar(index3, true, i);
+                x = deepStarPositions[index3];
+                y = deepStarPositions[index3 + 1];
+                z = deepStarPositions[index3 + 2];
+            } else {
+                deepStarPositions[index3] = x;
+                deepStarPositions[index3 + 1] = y;
+                deepStarPositions[index3 + 2] = z;
+            }
+        } else {
+            deepStarPositions[index3] = x;
+            deepStarPositions[index3 + 1] = y;
+            deepStarPositions[index3 + 2] = z;
         }
 
         const depthMix = THREE.MathUtils.clamp((deepStarPositions[index3 + 2] + DEEP_STAR_FIELD_DEPTH * 0.5) / DEEP_STAR_FIELD_DEPTH, 0, 1);
         const twinkleAmp = DEEP_STAR_TWINKLE_AMPLITUDE * (deepStarTwinkleAmp ? deepStarTwinkleAmp[i] : 1);
         const twinkle = 1 + Math.sin(nowMs * STAR_TWINKLE_SPEED * 0.86 + deepStarTwinklePhase[i]) * twinkleAmp;
         const depthBrightness = DEEP_STAR_FAR_BRIGHTNESS + (DEEP_STAR_NEAR_BRIGHTNESS - DEEP_STAR_FAR_BRIGHTNESS) * depthMix;
-        const brightness = depthBrightness * twinkle;
+        const brightness = depthBrightness * twinkle * sceneDarkness;
         deepStarColors[index3] = THREE.MathUtils.clamp(deepStarBaseColors[index3] * brightness, 0, 1);
         deepStarColors[index3 + 1] = THREE.MathUtils.clamp(deepStarBaseColors[index3 + 1] * brightness, 0, 1);
         deepStarColors[index3 + 2] = THREE.MathUtils.clamp(deepStarBaseColors[index3 + 2] * brightness, 0, 1);
@@ -2401,6 +2542,8 @@ function updateNebula(nowMs) {
         return;
     }
 
+    const collapse = singularityCollapse;
+    const collapseEase = collapse * collapse;
     const parallaxX = pointerSmoothNDC.x * NEBULA_POINTER_PARALLAX_X;
     const parallaxY = pointerSmoothNDC.y * NEBULA_POINTER_PARALLAX_Y;
 
@@ -2408,15 +2551,28 @@ function updateNebula(nowMs) {
         const layer = nebulaLayers[i];
         const state = layer.userData;
         const depthMul = 0.4 + (i / Math.max(1, nebulaLayers.length - 1)) * 0.75;
-        layer.position.x = state.baseX + Math.sin(nowMs * 0.00002 * state.driftX + state.phase) * 14 + parallaxX * depthMul;
-        layer.position.y = state.baseY + Math.sin(nowMs * 0.000024 * state.driftY + state.phase * 1.3) * 10 + parallaxY * depthMul;
+        const baseX = state.baseX + Math.sin(nowMs * 0.00002 * state.driftX + state.phase) * 14 + parallaxX * depthMul;
+        const baseY = state.baseY + Math.sin(nowMs * 0.000024 * state.driftY + state.phase * 1.3) * 10 + parallaxY * depthMul;
+        layer.position.x = baseX;
+        layer.position.y = baseY;
         layer.material.opacity = state.baseOpacity * (0.82 + Math.sin(nowMs * 0.00012 + state.phase) * 0.14);
+
+        if (collapse > 0.0001) {
+            pointerAtZ(layer.position.z, singularityVectorA);
+            const pullLerp = THREE.MathUtils.clamp(0.02 + collapseEase * 0.2, 0, 0.32);
+            layer.position.x = THREE.MathUtils.lerp(layer.position.x, singularityVectorA.x, pullLerp);
+            layer.position.y = THREE.MathUtils.lerp(layer.position.y, singularityVectorA.y, pullLerp);
+            layer.material.opacity *= Math.max(0, 1 - collapse * 1.4);
+        }
     }
 }
 
 function updateStars(delta, nowMs) {
     const positions = starPositions;
-    const hasInfluence = blackHoleRadius > 0.5;
+    const collapse = singularityCollapse;
+    const hasCollapse = collapse > 0.0001;
+    const hasInfluence = blackHoleRadius > 0.5 || hasCollapse;
+    const sceneDarkness = 1 - collapse * 0.97;
 
     const cameraX = camera.position.x;
     const cameraY = camera.position.y;
@@ -2432,8 +2588,11 @@ function updateStars(delta, nowMs) {
     const influenceRadiusSq = influenceRadius * influenceRadius;
     const horizonRadius = blackHoleRadius * STAR_HORIZON_MULT * (1 + blackHolePower * 0.1);
     const captureRadius = horizonRadius * STAR_HORIZON_CAPTURE_MULT;
-    const gravityStrength = STAR_GRAVITY_BASE * (1 + blackHolePower * 1.28);
-    const pullForceBase = STAR_PULL_FORCE * (1 + blackHolePower * 0.72);
+    const collapseInfluenceRadius = STAR_FIELD_WIDTH * (0.75 + collapse * 1.35);
+    const collapseInfluenceRadiusSq = collapseInfluenceRadius * collapseInfluenceRadius;
+    const collapseCaptureRadius = 4 + collapse * SINGULARITY_CAPTURE_RADIUS_MAX;
+    const gravityStrength = STAR_GRAVITY_BASE * (1 + blackHolePower * 1.28 + collapse * 1.8);
+    const pullForceBase = STAR_PULL_FORCE * (1 + blackHolePower * 0.72 + collapse * 1.35);
     const swirlForceBase = STAR_SWIRL_FORCE * (1 + blackHolePower * 0.46);
     const drag = Math.pow(STAR_DRAG, delta);
 
@@ -2464,10 +2623,14 @@ function updateStars(delta, nowMs) {
             const dx = x - mouseX;
             const dy = y - mouseY;
             const distSq = dx * dx + dy * dy;
+            const dynamicInfluenceRadiusSq = hasCollapse
+                ? Math.max(influenceRadiusSq, collapseInfluenceRadiusSq)
+                : influenceRadiusSq;
 
-            if (distSq < influenceRadiusSq) {
+            if (distSq < dynamicInfluenceRadiusSq) {
                 const dist = Math.sqrt(distSq) + 0.0001;
-                if (dist < captureRadius) {
+                const dynamicCaptureRadius = Math.max(captureRadius, collapseCaptureRadius);
+                if (dist < dynamicCaptureRadius) {
                     resetStar(index3, true, i);
                     x = positions[index3];
                     y = positions[index3 + 1];
@@ -2484,21 +2647,38 @@ function updateStars(delta, nowMs) {
                 const ny = dy / dist;
                 const falloff = 1 - dist / influenceRadius;
                 const inverseDistSq = 1 / (distSq + 14);
-                const radialForce = gravityStrength * inverseDistSq * (0.38 + falloff * falloff * 2.6);
+                const collapseFalloff = hasCollapse
+                    ? THREE.MathUtils.clamp(1 - (distSq / (collapseInfluenceRadiusSq + 0.0001)), 0, 1)
+                    : 0;
+                const radialForce = gravityStrength * inverseDistSq * (
+                    0.38 +
+                    falloff * falloff * 2.6 +
+                    collapseFalloff * collapse * 2.4
+                );
                 const horizonBoost = 1 + Math.pow(horizonRadius / Math.max(dist, horizonRadius), 2.25) * 2.3;
-                lensingStrength = THREE.MathUtils.clamp(1 - dist / influenceRadius, 0, 1);
+                lensingStrength = THREE.MathUtils.clamp(
+                    Math.max(1 - dist / influenceRadius, collapseFalloff),
+                    0,
+                    1
+                );
                 tangentX = -ny;
                 tangentY = nx;
 
-                if (isRightPointerDown) {
+                if (isRightPointerDown && !hasCollapse) {
                     const pushForce = radialForce * STAR_PUSH_FORCE;
                     vx += nx * pushForce * delta;
                     vy += ny * pushForce * delta;
                 } else {
-                    const orbitBias = THREE.MathUtils.clamp(1 - dist / influenceRadius, 0, 1);
+                    const orbitBias = THREE.MathUtils.clamp(1 - dist / Math.max(influenceRadius, collapseInfluenceRadius), 0, 1);
                     const pullForce = radialForce * pullForceBase * (1 + orbitBias * 0.55) * horizonBoost;
                     const swirlDampNearCore = THREE.MathUtils.clamp((dist - captureRadius) / (influenceRadius - captureRadius + 0.0001), 0, 1);
-                    const swirlForce = radialForce * swirlForceBase * (0.35 + orbitBias * 0.95) * swirlDampNearCore;
+                    let swirlForce = radialForce * swirlForceBase * (0.35 + orbitBias * 0.95) * swirlDampNearCore;
+                    if (hasCollapse) {
+                        const sinkPull = (SINGULARITY_PULL_FORCE * (0.32 + collapse * 0.68)) / (dist + 16);
+                        vx += -nx * sinkPull * delta;
+                        vy += -ny * sinkPull * delta;
+                        swirlForce *= 0.58;
+                    }
 
                     vx += (-nx * pullForce + tangentX * swirlForce) * delta;
                     vy += (-ny * pullForce + tangentY * swirlForce) * delta;
@@ -2521,30 +2701,37 @@ function updateStars(delta, nowMs) {
         const depthBrightness = STAR_FAR_BRIGHTNESS + (STAR_NEAR_BRIGHTNESS - STAR_FAR_BRIGHTNESS) * depthMix;
         const twinkleAmp = STAR_TWINKLE_AMPLITUDE * (starTwinkleAmp ? starTwinkleAmp[i] : 1);
         const twinkle = 1 + Math.sin(nowMs * STAR_TWINKLE_SPEED + starTwinklePhase[i]) * twinkleAmp;
-        const brightness = depthBrightness * twinkle;
+        const brightness = depthBrightness * twinkle * sceneDarkness;
         const lensingColor = lensingStrength * lensingStrength;
         const tangentialVelocity = vx * tangentX + vy * tangentY;
         const dopplerShift = lensingStrength > 0
             ? THREE.MathUtils.clamp(tangentialVelocity * 0.04, -1, 1) * lensingStrength
             : 0;
+        const sinkTint = 1 - collapse * (0.35 + lensingStrength * 0.55);
 
         starColors[index3] = THREE.MathUtils.clamp(
-            starBaseColors[index3] * brightness +
-            lensingColor * STAR_GRAV_LENS_COLOR_SHIFT -
-            dopplerShift * STAR_DOPPLER_COLOR_SHIFT * 0.8,
+            (
+                starBaseColors[index3] * brightness +
+                lensingColor * STAR_GRAV_LENS_COLOR_SHIFT -
+                dopplerShift * STAR_DOPPLER_COLOR_SHIFT * 0.8
+            ) * sinkTint,
             0,
             1
         );
         starColors[index3 + 1] = THREE.MathUtils.clamp(
-            starBaseColors[index3 + 1] * brightness +
-            lensingColor * STAR_GRAV_LENS_COLOR_SHIFT * 0.32,
+            (
+                starBaseColors[index3 + 1] * brightness +
+                lensingColor * STAR_GRAV_LENS_COLOR_SHIFT * 0.32
+            ) * sinkTint,
             0,
             1
         );
         starColors[index3 + 2] = THREE.MathUtils.clamp(
-            starBaseColors[index3 + 2] * brightness -
-            lensingColor * STAR_GRAV_LENS_COLOR_SHIFT * 0.62 +
-            dopplerShift * STAR_DOPPLER_COLOR_SHIFT,
+            (
+                starBaseColors[index3 + 2] * brightness -
+                lensingColor * STAR_GRAV_LENS_COLOR_SHIFT * 0.62 +
+                dopplerShift * STAR_DOPPLER_COLOR_SHIFT
+            ) * sinkTint,
             0,
             1
         );
@@ -2557,7 +2744,9 @@ function updateStars(delta, nowMs) {
 }
 
 function updateFoodMeshes(delta) {
-    const hasInfluence = blackHoleRadius > 0.5;
+    const collapse = singularityCollapse;
+    const hasCollapse = collapse > 0.0001;
+    const hasInfluence = blackHoleRadius > 0.5 || hasCollapse;
 
     const cameraX = camera.position.x;
     const cameraY = camera.position.y;
@@ -2573,6 +2762,9 @@ function updateFoodMeshes(delta) {
     const influenceRadiusSq = influenceRadius * influenceRadius;
     const horizonRadius = blackHoleRadius * FOOD_HORIZON_MULT * (1 + blackHolePower * 0.12);
     const captureRadius = horizonRadius * FOOD_HORIZON_CAPTURE_MULT;
+    const collapseInfluenceRadius = STAR_FIELD_WIDTH * (0.55 + collapse * 1.2);
+    const collapseInfluenceRadiusSq = collapseInfluenceRadius * collapseInfluenceRadius;
+    const collapseCaptureRadius = 5 + collapse * (SINGULARITY_CAPTURE_RADIUS_MAX * 0.14);
     const gravityStrength = FOOD_GRAVITY_BASE * (1 + blackHolePower * 1.2);
     const pullForceBase = FOOD_PULL_FORCE * (1 + blackHolePower * 0.75);
     const swirlForceBase = FOOD_SWIRL_FORCE * (1 + blackHolePower * 0.5);
@@ -2593,10 +2785,13 @@ function updateFoodMeshes(delta) {
             const dx = mesh.position.x - mouseX;
             const dy = mesh.position.y - mouseY;
             const distSq = dx * dx + dy * dy;
+            const dynamicInfluenceRadiusSq = hasCollapse
+                ? Math.max(influenceRadiusSq, collapseInfluenceRadiusSq)
+                : influenceRadiusSq;
 
-            if (distSq < influenceRadiusSq) {
+            if (distSq < dynamicInfluenceRadiusSq) {
                 const dist = Math.sqrt(distSq) + 0.0001;
-                if (dist < captureRadius) {
+                if (dist < Math.max(captureRadius, collapseCaptureRadius)) {
                     removeFoodAt(i);
                     continue;
                 }
@@ -2610,7 +2805,7 @@ function updateFoodMeshes(delta) {
                 const radialForce = gravityStrength * inverseDistSq * (0.34 + falloff * falloff * 2.5);
                 const horizonBoost = 1 + Math.pow(horizonRadius / Math.max(dist, horizonRadius), 2.2) * 2.1;
 
-                if (isRightPointerDown) {
+                if (isRightPointerDown && !hasCollapse) {
                     const pushForce = radialForce * FOOD_PUSH_FORCE;
                     ax += nx * pushForce;
                     ay += ny * pushForce;
@@ -2626,6 +2821,14 @@ function updateFoodMeshes(delta) {
 
                     ax += -nx * pullForce + tx * swirlForce;
                     ay += -ny * pullForce + ty * swirlForce;
+                }
+
+                if (hasCollapse) {
+                    const sinkPull = (SINGULARITY_PULL_FORCE * (0.52 + collapse * 0.64)) / (dist + 22);
+                    ax += -nx * sinkPull;
+                    ay += -ny * sinkPull;
+                    ax += tx * sinkPull * 0.15;
+                    ay += ty * sinkPull * 0.15;
                 }
             }
         }
@@ -2646,7 +2849,7 @@ function updateFoodMeshes(delta) {
         const progress = THREE.MathUtils.clamp(state.traveled / Math.max(0.0001, state.travelLength), 0, 1);
         const fadeIn = THREE.MathUtils.clamp(progress / 0.15, 0, 1);
         const fadeOut = THREE.MathUtils.clamp((1 - progress) / 0.22, 0, 1);
-        mesh.material.opacity = 0.96 * Math.min(fadeIn, fadeOut);
+        mesh.material.opacity = 0.96 * Math.min(fadeIn, fadeOut) * (1 - collapse * 0.92);
 
         const { halfWidth, halfHeight } = getPlaneHalfExtentsAtZ(mesh.position.z);
         const limitX = halfWidth + FOOD_EDGE_PADDING + 42;
@@ -2683,7 +2886,10 @@ function updateConstellation(nowMs) {
     const entryFlash = 1 + Math.pow(1 - flashProgress, 2) * CONSTELLATION_ENTRY_FLASH_BOOST;
     const sparkleBoost = getConstellationSparkleBoost(nowMs);
     const powerBoost = 1 + blackHolePower * CONSTELLATION_VISIBILITY_POWER_MULT;
-    const visibilityBoost = CONSTELLATION_VISIBILITY_MULT * powerBoost * entryFlash * sparkleBoost;
+    const collapse = singularityCollapse;
+    const collapseEase = collapse * collapse;
+    const collapseVisibility = Math.max(0, 1 - collapse * 0.995);
+    const visibilityBoost = CONSTELLATION_VISIBILITY_MULT * powerBoost * entryFlash * sparkleBoost * collapseVisibility;
     const pulse =
         0.92 +
         Math.sin(nowMs * 0.0017) * 0.06 +
@@ -2737,9 +2943,22 @@ function updateConstellation(nowMs) {
             0.8
         );
     }
-    constellationGroup.position.copy(constellationBasePosition);
-    constellationGroup.rotation.x = -0.02;
-    constellationGroup.rotation.z = -0.006;
+
+    if (collapse > 0.0001) {
+        pointerAtZ(constellationBasePosition.z, singularityVectorB);
+        const pullLerp = THREE.MathUtils.clamp(0.03 + collapseEase * 0.23, 0, 0.35);
+        constellationGroup.position.lerp(singularityVectorB, pullLerp);
+
+        const scaleMul = Math.max(0.02, 1 - collapse * 0.92);
+        constellationGroup.scale.set(CONSTELLATION_SCALE * scaleMul, CONSTELLATION_SCALE * scaleMul, 1);
+        constellationGroup.rotation.x = -0.02 + collapse * 0.4;
+        constellationGroup.rotation.z = -0.006 + collapse * 0.34;
+    } else {
+        constellationGroup.position.copy(constellationBasePosition);
+        constellationGroup.scale.set(CONSTELLATION_SCALE, CONSTELLATION_SCALE, 1);
+        constellationGroup.rotation.x = -0.02;
+        constellationGroup.rotation.z = -0.006;
+    }
 }
 
 function animate(nowMs = performance.now()) {
