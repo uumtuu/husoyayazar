@@ -17,7 +17,7 @@ const foods = [
     "ıslak hamburger"
 ];
 
-const BUILD_ID = "20260217-constellation-v11-husospace-static";
+const BUILD_ID = "20260217-constellation-v12-husospace-visibility-tune";
 
 const BASE_STAR_COUNT = 22000;
 const MIN_STAR_COUNT = 7000;
@@ -95,6 +95,7 @@ const CONSTELLATION_MAX_LINKS_PER_NODE = 3;
 const CONSTELLATION_DEPTH_JITTER = 16;
 const CONSTELLATION_LINE_DEPTH_SPLIT_Z = -190;
 const CONSTELLATION_FAR_LINE_OPACITY_MULT = 0.5;
+const CONSTELLATION_VISIBILITY_MULT = 1.12;
 
 let scene;
 let camera;
@@ -1454,10 +1455,10 @@ function updateConstellation(nowMs) {
         1
     );
     const pulse = 0.92 + Math.sin(nowMs * 0.0017) * 0.08;
-    constellationDustMaterial.opacity = (0.045 + pulse * 0.014) * fadeProgress;
-    constellationNodeMaterial.opacity = (0.12 + pulse * 0.028) * fadeProgress;
+    constellationDustMaterial.opacity = (0.045 + pulse * 0.014) * fadeProgress * CONSTELLATION_VISIBILITY_MULT;
+    constellationNodeMaterial.opacity = (0.12 + pulse * 0.028) * fadeProgress * CONSTELLATION_VISIBILITY_MULT;
 
-    const nearLineOpacity = (0.05 + pulse * 0.016) * fadeProgress;
+    const nearLineOpacity = (0.05 + pulse * 0.016) * fadeProgress * CONSTELLATION_VISIBILITY_MULT;
     if (constellationLineMaterial) {
         constellationLineMaterial.opacity = nearLineOpacity;
     }
