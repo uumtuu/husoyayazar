@@ -17,7 +17,7 @@ const foods = [
     "ıslak hamburger"
 ];
 
-const BUILD_ID = "20260217-constellation-v16-four-limb-draw-join-flash";
+const BUILD_ID = "20260217-constellation-v17-mouth-flow-cinematic-tune";
 
 const BASE_STAR_COUNT = 22000;
 const MIN_STAR_COUNT = 7000;
@@ -112,6 +112,19 @@ const CONSTELLATION_ENTRY_LINE_REVEAL_DELAY_MS = 180;
 const CONSTELLATION_ENTRY_LINE_REVEAL_MS = 1650;
 const CONSTELLATION_JOIN_FLASH_DURATION_MS = 260;
 const CONSTELLATION_JOIN_FLASH_SIZE = 3.6;
+const FOOD_MOUTH_TARGET_X = CONSTELLATION_MOUTH_TARGET_X;
+const FOOD_MOUTH_TARGET_Y = CONSTELLATION_MOUTH_TARGET_Y;
+const FOOD_MOUTH_TARGET_Z = CONSTELLATION_TARGET_Z + 8;
+const FOOD_MOUTH_CAPTURE_RADIUS = 15;
+const FOOD_MOUTH_CAPTURE_Z_WINDOW = 22;
+const FOOD_MOUTH_STEER_START_Z = 64;
+const FOOD_MOUTH_STEER_FORCE = 0.00135;
+const FOOD_MOUTH_FLOW_MIN_Y = 0.06;
+const NEBULA_POINTER_PARALLAX_X = 12;
+const NEBULA_POINTER_PARALLAX_Y = 8;
+const STAR_TWINKLE_SPEED = 0.00034;
+const STAR_TWINKLE_AMPLITUDE = 0.045;
+const DEEP_STAR_TWINKLE_AMPLITUDE = 0.03;
 
 const SHOOTING_STAR_MIN_INTERVAL_MS = 2000;
 const SHOOTING_STAR_MAX_INTERVAL_MS = 5200;
@@ -241,180 +254,14 @@ function createConstellationJoinFlashData(lineTriplesNear, lineTriplesFar) {
     return { positions, lookup };
 }
 
-function pickSeedNode(nodePositions, scorer, filterFn = null) {
-    const nodeCount = Math.floor(nodePositions.length / 3);
-    let bestIndex = -1;
-    let bestScore = -Infinity;
-
-    for (let i = 0; i < nodeCount; i += 1) {
-        const index3 = i * 3;
-        const x = nodePositions[index3];
-        const y = nodePositions[index3 + 1];
-        if (filterFn && !filterFn(x, y, i)) {
-            continue;
-        }
-
-        const score = scorer(x, y, i);
-        if (score > bestScore) {
-            bestScore = score;
-            bestIndex = i;
-        }
-    }
-
-    return bestIndex;
-}
-
-function createLimbSeedNodes(nodePositions) {
-    const nodeCount = Math.floor(nodePositions.length / 3);
-    if (nodeCount === 0) {
-        return [];
-    }
-
-    let minY = Infinity;
-    let maxY = -Infinity;
-    for (let i = 0; i < nodeCount; i += 1) {
-        const y = nodePositions[i * 3 + 1];
-        minY = Math.min(minY, y);
-        maxY = Math.max(maxY, y);
-    }
-
-    const yRange = Math.max(0.0001, maxY - minY);
-    const armMinY = minY + yRange * 0.56;
-    const legMaxY = minY + yRange * 0.4;
-
-    const scorers = [
-        (x, y) => -x * 1.08 + y * 0.28, // Sol kol
-        (x, y) => x * 1.08 + y * 0.28,  // Sag kol
-        (x, y) => -x * 1.08 - y * 0.52, // Sol ayak
-        (x, y) => x * 1.08 - y * 0.52   // Sag ayak
-    ];
-    const filters = [
-        (x, y) => y >= armMinY,
-        (x, y) => y >= armMinY,
-        (x, y) => y <= legMaxY,
-        (x, y) => y <= legMaxY
-    ];
-
-    const seeds = scorers.map((scorer, idx) => {
-        const withFilter = pickSeedNode(nodePositions, scorer, filters[idx]);
-        if (withFilter >= 0) {
-            return withFilter;
-        }
-        return pickSeedNode(nodePositions, scorer);
-    });
-
-    const used = new Set();
-    for (let i = 0; i < seeds.length; i += 1) {
-        if (seeds[i] >= 0 && !used.has(seeds[i])) {
-            used.add(seeds[i]);
-            continue;
-        }
-
-        const replacement = pickSeedNode(
-            nodePositions,
-            (x, y, nodeIndex) => scorers[i](x, y) + seededUnit((nodeIndex + 1) * (i + 3.37)) * 0.015,
-            (x, y, nodeIndex) => !used.has(nodeIndex)
-        );
-        if (replacement >= 0) {
-            seeds[i] = replacement;
-            used.add(replacement);
-        }
-    }
-
-    return seeds.filter((seed) => seed >= 0);
-}
-
-function buildNodeDistances(adjacency, seedNode) {
-    const nodeCount = adjacency.length;
-    const distances = new Int32Array(nodeCount);
-    distances.fill(-1);
-
-    if (seedNode < 0 || seedNode >= nodeCount) {
-        return distances;
-    }
-
-    const queue = new Int32Array(nodeCount);
-    let queueHead = 0;
-    let queueTail = 0;
-
-    distances[seedNode] = 0;
-    queue[queueTail] = seedNode;
-    queueTail += 1;
-
-    while (queueHead < queueTail) {
-        const node = queue[queueHead];
-        queueHead += 1;
-        const nextDistance = distances[node] + 1;
-        const neighbors = adjacency[node];
-
-        for (let i = 0; i < neighbors.length; i += 1) {
-            const neighbor = neighbors[i];
-            if (distances[neighbor] !== -1) {
-                continue;
-            }
-            distances[neighbor] = nextDistance;
-            queue[queueTail] = neighbor;
-            queueTail += 1;
-        }
-    }
-
-    return distances;
-}
-
 function sortLineTriplesForEntry(lineTriples, seedOffset) {
     const segmentCount = Math.floor(lineTriples.length / 6);
     if (segmentCount === 0) {
         return [];
     }
 
-    const nodeByKey = new Map();
-    const nodePositions = [];
-    const segmentNodeA = new Int32Array(segmentCount);
-    const segmentNodeB = new Int32Array(segmentCount);
-
-    const getNodeId = (x, y, z) => {
-        const key = pointKey(x, y, z);
-        if (!nodeByKey.has(key)) {
-            const nodeId = Math.floor(nodePositions.length / 3);
-            nodeByKey.set(key, nodeId);
-            nodePositions.push(x, y, z);
-        }
-        return nodeByKey.get(key);
-    };
-
+    const segments = [];
     for (let i = 0; i < segmentCount; i += 1) {
-        const index6 = i * 6;
-        const ax = lineTriples[index6];
-        const ay = lineTriples[index6 + 1];
-        const az = lineTriples[index6 + 2];
-        const bx = lineTriples[index6 + 3];
-        const by = lineTriples[index6 + 4];
-        const bz = lineTriples[index6 + 5];
-        segmentNodeA[i] = getNodeId(ax, ay, az);
-        segmentNodeB[i] = getNodeId(bx, by, bz);
-    }
-
-    const nodeCount = Math.floor(nodePositions.length / 3);
-    const adjacency = Array.from({ length: nodeCount }, () => []);
-    for (let i = 0; i < segmentCount; i += 1) {
-        const a = segmentNodeA[i];
-        const b = segmentNodeB[i];
-        if (a === b) {
-            continue;
-        }
-        adjacency[a].push(b);
-        adjacency[b].push(a);
-    }
-
-    const seeds = createLimbSeedNodes(nodePositions);
-    const seedDistances = seeds.map((seed) => buildNodeDistances(adjacency, seed));
-    const groupedBySeed = Array.from({ length: seeds.length }, () => new Map());
-    const leftovers = [];
-    let maxLevel = 0;
-
-    for (let i = 0; i < segmentCount; i += 1) {
-        const a = segmentNodeA[i];
-        const b = segmentNodeB[i];
         const index6 = i * 6;
         const ax = lineTriples[index6];
         const ay = lineTriples[index6 + 1];
@@ -422,108 +269,38 @@ function sortLineTriplesForEntry(lineTriples, seedOffset) {
         const by = lineTriples[index6 + 4];
         const mx = (ax + bx) * 0.5;
         const my = (ay + by) * 0.5;
-        const radial = Math.hypot(mx, my);
-
-        let bestSeedIndex = -1;
-        let bestLevel = Number.POSITIVE_INFINITY;
-        let bestTie = Number.POSITIVE_INFINITY;
-
-        for (let seedIdx = 0; seedIdx < seedDistances.length; seedIdx += 1) {
-            const distanceMap = seedDistances[seedIdx];
-            const da = distanceMap[a];
-            const db = distanceMap[b];
-            if (da < 0 && db < 0) {
-                continue;
-            }
-
-            const level = Math.min(
-                da < 0 ? Number.MAX_SAFE_INTEGER : da,
-                db < 0 ? Number.MAX_SAFE_INTEGER : db
-            );
-            const seedNode = seeds[seedIdx];
-            const seedX = nodePositions[seedNode * 3];
-            const seedY = nodePositions[seedNode * 3 + 1];
-            const tie = Math.hypot(mx - seedX, my - seedY) + seededUnit((i + 1) * (seedIdx + 9.73) + seedOffset * 1.51) * 0.19;
-
-            if (level < bestLevel || (level === bestLevel && tie < bestTie)) {
-                bestLevel = level;
-                bestTie = tie;
-                bestSeedIndex = seedIdx;
-            }
-        }
-
-        if (bestSeedIndex < 0 || !Number.isFinite(bestLevel)) {
-            leftovers.push({
-                index: i,
-                score: radial + seededUnit((i + 1) * 31.7 + seedOffset * 2.3) * 4.5
-            });
-            continue;
-        }
-
-        const bucketMap = groupedBySeed[bestSeedIndex];
-        if (!bucketMap.has(bestLevel)) {
-            bucketMap.set(bestLevel, []);
-        }
-        bucketMap.get(bestLevel).push({
-            index: i,
-            tie: bestTie
+        const side = getEntrySideVector(mx, my);
+        const radial = THREE.MathUtils.clamp(
+            Math.hypot(mx, my) / (CONSTELLATION_WORLD_WIDTH * 0.72),
+            0,
+            1
+        );
+        const sideBias = side.sx !== 0 ? 0.24 : 0.72;
+        const noise = seededUnit((i + 1) * 17.417 + seedOffset * 1.73);
+        const score = radial * 0.55 + noise * 0.33 + sideBias * 0.12;
+        segments.push({
+            score,
+            values: [
+                lineTriples[index6],
+                lineTriples[index6 + 1],
+                lineTriples[index6 + 2],
+                lineTriples[index6 + 3],
+                lineTriples[index6 + 4],
+                lineTriples[index6 + 5]
+            ]
         });
-        maxLevel = Math.max(maxLevel, bestLevel);
     }
 
-    const orderedSegmentIndices = [];
-    const added = new Uint8Array(segmentCount);
-    for (let level = 0; level <= maxLevel; level += 1) {
-        for (let seedIdx = 0; seedIdx < groupedBySeed.length; seedIdx += 1) {
-            const bucket = groupedBySeed[seedIdx].get(level);
-            if (!bucket || bucket.length === 0) {
-                continue;
-            }
-            bucket.sort((a, b) => a.tie - b.tie);
-            for (let i = 0; i < bucket.length; i += 1) {
-                const segmentIndex = bucket[i].index;
-                if (added[segmentIndex]) {
-                    continue;
-                }
-                added[segmentIndex] = 1;
-                orderedSegmentIndices.push(segmentIndex);
-            }
-        }
-    }
-
-    leftovers.sort((a, b) => a.score - b.score);
-    for (let i = 0; i < leftovers.length; i += 1) {
-        const segmentIndex = leftovers[i].index;
-        if (added[segmentIndex]) {
-            continue;
-        }
-        added[segmentIndex] = 1;
-        orderedSegmentIndices.push(segmentIndex);
-    }
-
-    for (let i = 0; i < segmentCount; i += 1) {
-        if (added[i]) {
-            continue;
-        }
-        orderedSegmentIndices.push(i);
-    }
+    segments.sort((a, b) => a.score - b.score);
 
     const ordered = [];
-    for (let i = 0; i < orderedSegmentIndices.length; i += 1) {
-        const index6 = orderedSegmentIndices[i] * 6;
-        ordered.push(
-            lineTriples[index6],
-            lineTriples[index6 + 1],
-            lineTriples[index6 + 2],
-            lineTriples[index6 + 3],
-            lineTriples[index6 + 4],
-            lineTriples[index6 + 5]
-        );
+    for (let i = 0; i < segments.length; i += 1) {
+        ordered.push(...segments[i].values);
     }
     return ordered;
 }
 
-function createConstellationEntryPayload(baseTriples, seedOffset, flashLookup = null, entryFlashEnabled = true) {
+function createConstellationEntryPayload(baseTriples, seedOffset, flashLookup = null, entryFlashEnabled = true, sideEntryEnabled = true) {
     const base = new Float32Array(baseTriples);
     const start = new Float32Array(base.length);
     const live = new Float32Array(base.length);
@@ -536,26 +313,35 @@ function createConstellationEntryPayload(baseTriples, seedOffset, flashLookup = 
         const x = base[index3];
         const y = base[index3 + 1];
         const z = base[index3 + 2];
-        const side = getEntrySideVector(x, y);
 
-        const r1 = seededUnit((i + 1) * 11.314 + seedOffset * 0.73);
-        const r2 = seededUnit((i + 1) * 23.217 + seedOffset * 1.11);
-        const r3 = seededUnit((i + 1) * 37.991 + seedOffset * 1.47);
         const r4 = seededUnit((i + 1) * 53.743 + seedOffset * 1.93);
 
-        const pull = CONSTELLATION_ENTRY_SIDE_OFFSET + r1 * CONSTELLATION_ENTRY_SIDE_VARIANCE;
-        const jitter = (r2 - 0.5) * CONSTELLATION_ENTRY_PERP_JITTER;
-        const depthJitter = (r3 - 0.5) * CONSTELLATION_ENTRY_DEPTH_JITTER;
+        if (sideEntryEnabled) {
+            const side = getEntrySideVector(x, y);
+            const r1 = seededUnit((i + 1) * 11.314 + seedOffset * 0.73);
+            const r2 = seededUnit((i + 1) * 23.217 + seedOffset * 1.11);
+            const r3 = seededUnit((i + 1) * 37.991 + seedOffset * 1.47);
+            const pull = CONSTELLATION_ENTRY_SIDE_OFFSET + r1 * CONSTELLATION_ENTRY_SIDE_VARIANCE;
+            const jitter = (r2 - 0.5) * CONSTELLATION_ENTRY_PERP_JITTER;
+            const depthJitter = (r3 - 0.5) * CONSTELLATION_ENTRY_DEPTH_JITTER;
 
-        start[index3] = x + side.sx * pull + side.px * jitter;
-        start[index3 + 1] = y + side.sy * pull + side.py * jitter;
-        start[index3 + 2] = z + depthJitter;
+            start[index3] = x + side.sx * pull + side.px * jitter;
+            start[index3 + 1] = y + side.sy * pull + side.py * jitter;
+            start[index3 + 2] = z + depthJitter;
 
-        live[index3] = start[index3];
-        live[index3 + 1] = start[index3 + 1];
-        live[index3 + 2] = start[index3 + 2];
-
-        delays[i] = r4 * CONSTELLATION_ENTRY_STAGGER_MS;
+            live[index3] = start[index3];
+            live[index3 + 1] = start[index3 + 1];
+            live[index3 + 2] = start[index3 + 2];
+            delays[i] = r4 * CONSTELLATION_ENTRY_STAGGER_MS;
+        } else {
+            start[index3] = x;
+            start[index3 + 1] = y;
+            start[index3 + 2] = z;
+            live[index3] = x;
+            live[index3 + 1] = y;
+            live[index3 + 2] = z;
+            delays[i] = 0;
+        }
         completed[i] = 0;
 
         if (flashIndices) {
@@ -576,6 +362,7 @@ function createConstellationEntryPayload(baseTriples, seedOffset, flashLookup = 
         revealedSegments: 0,
         segmentFlashPairs: null,
         entryFlashEnabled,
+        sideEntryEnabled,
         flashIndices,
         completed
     };
@@ -1698,10 +1485,10 @@ function buildConstellation(image) {
     const dustEntryPayload = createConstellationEntryPayload(dustTriples, 3);
     const nodeEntryPayload = createConstellationEntryPayload(nodeTriples, 5);
     const nearLineEntryPayload = orderedLineTriples.length > 0
-        ? createConstellationEntryPayload(orderedLineTriples, 7, joinFlashData.lookup, false)
+        ? createConstellationEntryPayload(orderedLineTriples, 7, joinFlashData.lookup, false, false)
         : null;
     const farLineEntryPayload = orderedFarLineTriples.length > 0
-        ? createConstellationEntryPayload(orderedFarLineTriples, 13, joinFlashData.lookup, false)
+        ? createConstellationEntryPayload(orderedFarLineTriples, 13, joinFlashData.lookup, false, false)
         : null;
 
     if (constellationGroup) {
@@ -2041,11 +1828,15 @@ function updateNebula(nowMs) {
         return;
     }
 
+    const parallaxX = pointerSmoothNDC.x * NEBULA_POINTER_PARALLAX_X;
+    const parallaxY = pointerSmoothNDC.y * NEBULA_POINTER_PARALLAX_Y;
+
     for (let i = 0; i < nebulaLayers.length; i += 1) {
         const layer = nebulaLayers[i];
         const state = layer.userData;
-        layer.position.x = state.baseX + Math.sin(nowMs * 0.00002 * state.driftX + state.phase) * 14;
-        layer.position.y = state.baseY + Math.sin(nowMs * 0.000024 * state.driftY + state.phase * 1.3) * 10;
+        const depthMul = 0.4 + (i / Math.max(1, nebulaLayers.length - 1)) * 0.75;
+        layer.position.x = state.baseX + Math.sin(nowMs * 0.00002 * state.driftX + state.phase) * 14 + parallaxX * depthMul;
+        layer.position.y = state.baseY + Math.sin(nowMs * 0.000024 * state.driftY + state.phase * 1.3) * 10 + parallaxY * depthMul;
         layer.material.opacity = state.baseOpacity * (0.82 + Math.sin(nowMs * 0.00012 + state.phase) * 0.14);
     }
 }
@@ -2229,18 +2020,38 @@ function updateFoodMeshes(delta) {
             }
         }
 
-        state.vx = (state.vx + ax * delta) * drag;
-        state.vy = (state.vy + ay * delta) * drag;
+        const mouthBlendRaw = THREE.MathUtils.clamp(
+            (FOOD_MOUTH_STEER_START_Z - mesh.position.z) / (FOOD_MOUTH_STEER_START_Z - FOOD_MOUTH_TARGET_Z),
+            0,
+            1
+        );
+        const mouthBlend = mouthBlendRaw * mouthBlendRaw * (3 - 2 * mouthBlendRaw);
+        const mouthDx = FOOD_MOUTH_TARGET_X - mesh.position.x;
+        const mouthDy = FOOD_MOUTH_TARGET_Y - mesh.position.y;
+        const mouthPull = FOOD_MOUTH_STEER_FORCE * (0.35 + mouthBlend * 1.4);
 
+        state.vx = (state.vx + ax * delta + mouthDx * mouthPull * delta) * drag;
+        state.vy = (state.vy + ay * delta + mouthDy * mouthPull * delta) * drag;
+
+        const flowY = THREE.MathUtils.lerp(FOOD_SPEED_Y, FOOD_MOUTH_FLOW_MIN_Y, mouthBlend);
         mesh.position.x += state.vx * delta;
-        mesh.position.y += FOOD_SPEED_Y * flowSpeedMul * delta + state.vy * delta;
+        mesh.position.y += flowY * flowSpeedMul * delta + state.vy * delta;
         mesh.position.z -= FOOD_SPEED_Z * flowSpeedMul * delta;
 
-        mesh.rotation.z += 0.002 * delta + Math.abs(state.vx) * 0.014;
+        mesh.rotation.z += 0.0018 * delta + Math.abs(state.vx) * 0.011 + mouthBlend * 0.012;
 
         mesh.material.opacity = THREE.MathUtils.clamp((mesh.position.z + 620) / 640, 0, 0.96);
 
-        if (mesh.position.z < -620 || mesh.position.y > 300) {
+        const mouthDistSq =
+            (mesh.position.x - FOOD_MOUTH_TARGET_X) * (mesh.position.x - FOOD_MOUTH_TARGET_X) +
+            (mesh.position.y - FOOD_MOUTH_TARGET_Y) * (mesh.position.y - FOOD_MOUTH_TARGET_Y);
+        const nearMouthZ = Math.abs(mesh.position.z - FOOD_MOUTH_TARGET_Z) <= FOOD_MOUTH_CAPTURE_Z_WINDOW;
+        if (nearMouthZ && mouthDistSq <= FOOD_MOUTH_CAPTURE_RADIUS * FOOD_MOUTH_CAPTURE_RADIUS) {
+            removeFoodAt(i);
+            continue;
+        }
+
+        if (mesh.position.z < -620 || mesh.position.y > 300 || Math.abs(mesh.position.x) > 380) {
             removeFoodAt(i);
         }
     }
@@ -2267,7 +2078,10 @@ function updateConstellation(nowMs) {
     const entryFlash = 1 + Math.pow(1 - flashProgress, 2) * CONSTELLATION_ENTRY_FLASH_BOOST;
     const powerBoost = 1 + blackHolePower * CONSTELLATION_VISIBILITY_POWER_MULT;
     const visibilityBoost = CONSTELLATION_VISIBILITY_MULT * powerBoost * entryFlash;
-    const pulse = 0.92 + Math.sin(nowMs * 0.0017) * 0.08;
+    const pulse =
+        0.92 +
+        Math.sin(nowMs * 0.0017) * 0.06 +
+        Math.sin(nowMs * 0.0032 + 1.1) * 0.03;
     constellationDustMaterial.opacity = Math.min(
         0.24,
         (0.045 + pulse * 0.014) * fadeProgress * visibilityBoost * CONSTELLATION_DUST_OPACITY_MULT
@@ -2325,6 +2139,21 @@ function animate(nowMs = performance.now()) {
     updateStars(delta);
     updateFoodMeshes(delta);
     updateConstellation(nowMs);
+
+    if (stars && stars.material) {
+        stars.material.opacity = THREE.MathUtils.clamp(
+            0.48 + Math.sin(nowMs * STAR_TWINKLE_SPEED) * STAR_TWINKLE_AMPLITUDE,
+            0.34,
+            0.62
+        );
+    }
+    if (deepStars && deepStars.material) {
+        deepStars.material.opacity = THREE.MathUtils.clamp(
+            0.22 + Math.cos(nowMs * STAR_TWINKLE_SPEED * 0.82 + 1.5) * DEEP_STAR_TWINKLE_AMPLITUDE,
+            0.14,
+            0.3
+        );
+    }
 
     renderer.render(scene, camera);
 }
