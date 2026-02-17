@@ -17,7 +17,7 @@ const foods = [
     "ıslak hamburger"
 ];
 
-const BUILD_ID = "20260217-constellation-v12-husospace-visibility-tune";
+const BUILD_ID = "20260217-constellation-v13-cinematic-plus";
 
 const BASE_STAR_COUNT = 22000;
 const MIN_STAR_COUNT = 7000;
@@ -96,6 +96,23 @@ const CONSTELLATION_DEPTH_JITTER = 16;
 const CONSTELLATION_LINE_DEPTH_SPLIT_Z = -190;
 const CONSTELLATION_FAR_LINE_OPACITY_MULT = 0.5;
 const CONSTELLATION_VISIBILITY_MULT = 1.12;
+const CONSTELLATION_VISIBILITY_POWER_MULT = 0.055;
+const CONSTELLATION_DUST_OPACITY_MULT = 1.1;
+const CONSTELLATION_NODE_OPACITY_MULT = 1.08;
+const CONSTELLATION_LINE_OPACITY_MULT = 0.86;
+const CONSTELLATION_ENTRY_FLASH_MS = 1450;
+const CONSTELLATION_ENTRY_FLASH_BOOST = 2.3;
+
+const SHOOTING_STAR_MIN_INTERVAL_MS = 2000;
+const SHOOTING_STAR_MAX_INTERVAL_MS = 5200;
+const SHOOTING_STAR_MIN_LIFE_MS = 700;
+const SHOOTING_STAR_MAX_LIFE_MS = 1300;
+const SHOOTING_STAR_MAX_ACTIVE = 3;
+const SHOOTING_STAR_MIN_START_Z = -1250;
+const SHOOTING_STAR_MAX_START_Z = -760;
+const SHOOTING_STAR_SPEED_Z_MIN = 9.5;
+const SHOOTING_STAR_SPEED_Z_MAX = 14.5;
+const SHOOTING_STAR_SPEED_XY = 0.55;
 
 let scene;
 let camera;
@@ -107,9 +124,11 @@ let starPositions;
 let starDrift;
 let starVelX;
 let starVelY;
+let starColors;
 let deepStarCount = MIN_DEEP_STAR_COUNT;
 let deepStarPositions;
 let deepStarDrift;
+let deepStarColors;
 
 let blackHoleCore;
 let blackHoleLensing;
@@ -126,6 +145,9 @@ let constellationReadyAtMs = 0;
 const constellationBasePosition = new THREE.Vector3();
 let nebulaGroup;
 let nebulaLayers = [];
+let shootingStarTexture;
+const shootingStars = [];
+let nextShootingStarAtMs = 0;
 
 let foodMeshes = [];
 let maxActiveFood = FOOD_MAX_ACTIVE;
@@ -147,6 +169,17 @@ let touchHoldPointerId = null;
 let touchHoldActivated = false;
 let powerAnchorClientX = null;
 let powerAnchorClientY = null;
+
+function setDepthColor(colorBuffer, index3, zValue, depth, nearRgb, farRgb) {
+    if (!colorBuffer) {
+        return;
+    }
+
+    const depthMix = THREE.MathUtils.clamp((zValue + depth * 0.5) / depth, 0, 1);
+    colorBuffer[index3] = farRgb[0] + (nearRgb[0] - farRgb[0]) * depthMix;
+    colorBuffer[index3 + 1] = farRgb[1] + (nearRgb[1] - farRgb[1]) * depthMix;
+    colorBuffer[index3 + 2] = farRgb[2] + (nearRgb[2] - farRgb[2]) * depthMix;
+}
 
 function getViewportDimensions() {
     const viewport = window.visualViewport;
@@ -244,6 +277,7 @@ function init() {
     createDeepStars();
     createNebulaLayer();
     createBlackHoleVisual();
+    scheduleNextShootingStar(performance.now() + 800);
 
     for (let i = 0; i < 4; i += 1) {
         spawnFoodRow();
@@ -406,6 +440,7 @@ function createStars() {
     starDrift = new Float32Array(starCount);
     starVelX = new Float32Array(starCount);
     starVelY = new Float32Array(starCount);
+    starColors = new Float32Array(starCount * 3);
 
     for (let i = 0; i < starCount; i += 1) {
         const index3 = i * 3;
@@ -417,14 +452,15 @@ function createStars() {
 
     const starGeometry = new THREE.BufferGeometry();
     starGeometry.setAttribute("position", new THREE.BufferAttribute(starPositions, 3));
+    starGeometry.setAttribute("color", new THREE.BufferAttribute(starColors, 3));
 
     const starMaterial = new THREE.PointsMaterial({
-        color: 0xf5fbff,
         size: 0.78,
         sizeAttenuation: true,
         transparent: true,
         opacity: 0.48,
-        depthWrite: false
+        depthWrite: false,
+        vertexColors: true
     });
 
     stars = new THREE.Points(starGeometry, starMaterial);
@@ -440,6 +476,14 @@ function resetStar(index3, moveToBack, starIndex = Math.floor(index3 / 3)) {
     } else {
         starPositions[index3 + 2] = (Math.random() - 0.5) * STAR_FIELD_DEPTH;
     }
+    setDepthColor(
+        starColors,
+        index3,
+        starPositions[index3 + 2],
+        STAR_FIELD_DEPTH,
+        [0.97, 0.99, 1],
+        [0.56, 0.71, 0.95]
+    );
 
     if (starVelX && starVelY) {
         starVelX[starIndex] = 0;
@@ -450,6 +494,7 @@ function resetStar(index3, moveToBack, starIndex = Math.floor(index3 / 3)) {
 function createDeepStars() {
     deepStarPositions = new Float32Array(deepStarCount * 3);
     deepStarDrift = new Float32Array(deepStarCount);
+    deepStarColors = new Float32Array(deepStarCount * 3);
 
     for (let i = 0; i < deepStarCount; i += 1) {
         const index3 = i * 3;
@@ -459,14 +504,15 @@ function createDeepStars() {
 
     const deepGeometry = new THREE.BufferGeometry();
     deepGeometry.setAttribute("position", new THREE.BufferAttribute(deepStarPositions, 3));
+    deepGeometry.setAttribute("color", new THREE.BufferAttribute(deepStarColors, 3));
 
     const deepMaterial = new THREE.PointsMaterial({
-        color: 0xbdd6f7,
         size: 0.62,
         sizeAttenuation: true,
         transparent: true,
         opacity: 0.22,
-        depthWrite: false
+        depthWrite: false,
+        vertexColors: true
     });
 
     deepStars = new THREE.Points(deepGeometry, deepMaterial);
@@ -483,6 +529,14 @@ function resetDeepStar(index3, moveToBack) {
     } else {
         deepStarPositions[index3 + 2] = (Math.random() - 0.5) * DEEP_STAR_FIELD_DEPTH;
     }
+    setDepthColor(
+        deepStarColors,
+        index3,
+        deepStarPositions[index3 + 2],
+        DEEP_STAR_FIELD_DEPTH,
+        [0.84, 0.91, 0.99],
+        [0.31, 0.46, 0.7]
+    );
 }
 
 function createNebulaTexture(seedOffset = 0) {
@@ -610,7 +664,7 @@ function createBlackHoleLensingTexture() {
     canvas.height = size;
     const context = canvas.getContext("2d");
 
-    const gradient = context.createRadialGradient(
+    const ringBase = context.createRadialGradient(
         size / 2,
         size / 2,
         0,
@@ -618,14 +672,30 @@ function createBlackHoleLensingTexture() {
         size / 2,
         size / 2
     );
-    gradient.addColorStop(0, "rgba(0,0,0,0)");
-    gradient.addColorStop(0.44, "rgba(0,0,0,0)");
-    gradient.addColorStop(0.6, "rgba(8,8,8,0.12)");
-    gradient.addColorStop(0.75, "rgba(150,190,255,0.13)");
-    gradient.addColorStop(0.88, "rgba(20,20,24,0.05)");
-    gradient.addColorStop(1, "rgba(0,0,0,0)");
+    ringBase.addColorStop(0, "rgba(0,0,0,0)");
+    ringBase.addColorStop(0.44, "rgba(0,0,0,0)");
+    ringBase.addColorStop(0.6, "rgba(8,8,8,0.12)");
+    ringBase.addColorStop(0.75, "rgba(150,190,255,0.13)");
+    ringBase.addColorStop(0.88, "rgba(20,20,24,0.05)");
+    ringBase.addColorStop(1, "rgba(0,0,0,0)");
+    context.fillStyle = ringBase;
+    context.fillRect(0, 0, size, size);
 
-    context.fillStyle = gradient;
+    // Hafif kromatik sapma halkasi.
+    const warmRing = context.createRadialGradient(size / 2 + 1.5, size / 2, size * 0.53, size / 2 + 1.5, size / 2, size * 0.94);
+    warmRing.addColorStop(0, "rgba(0,0,0,0)");
+    warmRing.addColorStop(0.34, "rgba(0,0,0,0)");
+    warmRing.addColorStop(0.54, "rgba(255,118,92,0.09)");
+    warmRing.addColorStop(0.7, "rgba(0,0,0,0)");
+    context.fillStyle = warmRing;
+    context.fillRect(0, 0, size, size);
+
+    const coolRing = context.createRadialGradient(size / 2 - 1.5, size / 2, size * 0.49, size / 2 - 1.5, size / 2, size * 0.9);
+    coolRing.addColorStop(0, "rgba(0,0,0,0)");
+    coolRing.addColorStop(0.32, "rgba(0,0,0,0)");
+    coolRing.addColorStop(0.52, "rgba(104,170,255,0.1)");
+    coolRing.addColorStop(0.68, "rgba(0,0,0,0)");
+    context.fillStyle = coolRing;
     context.fillRect(0, 0, size, size);
 
     const texture = new THREE.CanvasTexture(canvas);
@@ -662,6 +732,123 @@ function createBlackHoleVisual() {
     blackHoleLensing.position.set(0, 0, 3);
     blackHoleLensing.visible = false;
     scene.add(blackHoleLensing);
+}
+
+function createShootingStarTexture() {
+    const width = 320;
+    const height = 18;
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    const gradient = context.createLinearGradient(0, 0, width, 0);
+    gradient.addColorStop(0, "rgba(255,255,255,0)");
+    gradient.addColorStop(0.45, "rgba(210,235,255,0.78)");
+    gradient.addColorStop(0.7, "rgba(255,255,255,0.94)");
+    gradient.addColorStop(1, "rgba(255,255,255,0)");
+
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, width, height);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    return texture;
+}
+
+function scheduleNextShootingStar(nowMs) {
+    const delay = THREE.MathUtils.randFloat(SHOOTING_STAR_MIN_INTERVAL_MS, SHOOTING_STAR_MAX_INTERVAL_MS);
+    nextShootingStarAtMs = nowMs + delay;
+}
+
+function createShootingStar(nowMs) {
+    if (!shootingStarTexture) {
+        shootingStarTexture = createShootingStarTexture();
+    }
+
+    const length = THREE.MathUtils.randFloat(46, 86);
+    const thickness = THREE.MathUtils.randFloat(0.75, 1.65);
+    const material = new THREE.MeshBasicMaterial({
+        map: shootingStarTexture,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        depthTest: true,
+        blending: THREE.AdditiveBlending
+    });
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(length, thickness), material);
+
+    const dirX = THREE.MathUtils.randFloatSpread(SHOOTING_STAR_SPEED_XY);
+    const dirY = -THREE.MathUtils.randFloat(0.08, SHOOTING_STAR_SPEED_XY * 0.75);
+    const dirZ = THREE.MathUtils.randFloat(SHOOTING_STAR_SPEED_Z_MIN, SHOOTING_STAR_SPEED_Z_MAX);
+
+    mesh.position.set(
+        THREE.MathUtils.randFloatSpread(STAR_FIELD_WIDTH * 0.96),
+        THREE.MathUtils.randFloat(-260, 300),
+        THREE.MathUtils.randFloat(SHOOTING_STAR_MIN_START_Z, SHOOTING_STAR_MAX_START_Z)
+    );
+    mesh.rotation.z = Math.atan2(dirY, dirX);
+    mesh.rotation.x = -0.06;
+
+    mesh.userData = {
+        vx: dirX,
+        vy: dirY,
+        vz: dirZ,
+        bornMs: nowMs,
+        lifeMs: THREE.MathUtils.randFloat(SHOOTING_STAR_MIN_LIFE_MS, SHOOTING_STAR_MAX_LIFE_MS),
+        peakOpacity: THREE.MathUtils.randFloat(0.42, 0.68)
+    };
+
+    scene.add(mesh);
+    shootingStars.push(mesh);
+}
+
+function removeShootingStar(index) {
+    const mesh = shootingStars[index];
+    if (!mesh) {
+        return;
+    }
+
+    scene.remove(mesh);
+    if (mesh.material) {
+        mesh.material.dispose();
+    }
+    if (mesh.geometry) {
+        mesh.geometry.dispose();
+    }
+
+    shootingStars.splice(index, 1);
+}
+
+function updateShootingStars(delta, nowMs) {
+    if (shootingStars.length < SHOOTING_STAR_MAX_ACTIVE && nowMs >= nextShootingStarAtMs) {
+        createShootingStar(nowMs);
+        scheduleNextShootingStar(nowMs);
+    }
+
+    for (let i = shootingStars.length - 1; i >= 0; i -= 1) {
+        const star = shootingStars[i];
+        const state = star.userData;
+        const ageMs = nowMs - state.bornMs;
+        const lifeProgress = ageMs / state.lifeMs;
+
+        if (lifeProgress >= 1) {
+            removeShootingStar(i);
+            continue;
+        }
+
+        star.position.x += state.vx * delta;
+        star.position.y += state.vy * delta;
+        star.position.z += state.vz * delta;
+
+        const fadeIn = THREE.MathUtils.clamp(lifeProgress / 0.18, 0, 1);
+        const fadeOut = THREE.MathUtils.clamp((1 - lifeProgress) / 0.4, 0, 1);
+        star.material.opacity = state.peakOpacity * Math.min(fadeIn, fadeOut);
+
+        if (star.position.z > 700 || star.position.y < -460 || Math.abs(star.position.x) > STAR_FIELD_WIDTH * 0.95) {
+            removeShootingStar(i);
+        }
+    }
 }
 
 function loadConstellationFromImage(imageUrl) {
@@ -1235,6 +1422,9 @@ function updateDeepStars(delta) {
     }
 
     deepStars.geometry.attributes.position.needsUpdate = true;
+    if (deepStars.geometry.attributes.color) {
+        deepStars.geometry.attributes.color.needsUpdate = true;
+    }
 }
 
 function updateNebula(nowMs) {
@@ -1352,6 +1542,9 @@ function updateStars(delta) {
     }
 
     stars.geometry.attributes.position.needsUpdate = true;
+    if (stars.geometry.attributes.color) {
+        stars.geometry.attributes.color.needsUpdate = true;
+    }
 }
 
 function updateFoodMeshes(delta) {
@@ -1454,11 +1647,28 @@ function updateConstellation(nowMs) {
         0,
         1
     );
+    const flashProgress = THREE.MathUtils.clamp(
+        (nowMs - constellationReadyAtMs) / CONSTELLATION_ENTRY_FLASH_MS,
+        0,
+        1
+    );
+    const entryFlash = 1 + Math.pow(1 - flashProgress, 2) * CONSTELLATION_ENTRY_FLASH_BOOST;
+    const powerBoost = 1 + blackHolePower * CONSTELLATION_VISIBILITY_POWER_MULT;
+    const visibilityBoost = CONSTELLATION_VISIBILITY_MULT * powerBoost * entryFlash;
     const pulse = 0.92 + Math.sin(nowMs * 0.0017) * 0.08;
-    constellationDustMaterial.opacity = (0.045 + pulse * 0.014) * fadeProgress * CONSTELLATION_VISIBILITY_MULT;
-    constellationNodeMaterial.opacity = (0.12 + pulse * 0.028) * fadeProgress * CONSTELLATION_VISIBILITY_MULT;
+    constellationDustMaterial.opacity = Math.min(
+        0.24,
+        (0.045 + pulse * 0.014) * fadeProgress * visibilityBoost * CONSTELLATION_DUST_OPACITY_MULT
+    );
+    constellationNodeMaterial.opacity = Math.min(
+        0.44,
+        (0.12 + pulse * 0.028) * fadeProgress * visibilityBoost * CONSTELLATION_NODE_OPACITY_MULT
+    );
 
-    const nearLineOpacity = (0.05 + pulse * 0.016) * fadeProgress * CONSTELLATION_VISIBILITY_MULT;
+    const nearLineOpacity = Math.min(
+        0.22,
+        (0.05 + pulse * 0.016) * fadeProgress * visibilityBoost * CONSTELLATION_LINE_OPACITY_MULT
+    );
     if (constellationLineMaterial) {
         constellationLineMaterial.opacity = nearLineOpacity;
     }
@@ -1499,6 +1709,7 @@ function animate(nowMs = performance.now()) {
 
     updateNebula(nowMs);
     updateDeepStars(delta);
+    updateShootingStars(delta, nowMs);
     updateStars(delta);
     updateFoodMeshes(delta);
     updateConstellation(nowMs);
