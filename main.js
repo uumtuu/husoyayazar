@@ -17,7 +17,7 @@ const foods = [
     "ıslak hamburger"
 ];
 
-const BUILD_ID = "20260217-constellation-v17-mouth-flow-cinematic-tune";
+const BUILD_ID = "20260217-constellation-v18-side-food-line-draw";
 
 const BASE_STAR_COUNT = 22000;
 const MIN_STAR_COUNT = 7000;
@@ -109,17 +109,21 @@ const CONSTELLATION_ENTRY_SIDE_VARIANCE = 180;
 const CONSTELLATION_ENTRY_PERP_JITTER = 26;
 const CONSTELLATION_ENTRY_DEPTH_JITTER = 15;
 const CONSTELLATION_ENTRY_LINE_REVEAL_DELAY_MS = 180;
-const CONSTELLATION_ENTRY_LINE_REVEAL_MS = 1650;
+const CONSTELLATION_ENTRY_LINE_REVEAL_MS = 3200;
 const CONSTELLATION_JOIN_FLASH_DURATION_MS = 260;
 const CONSTELLATION_JOIN_FLASH_SIZE = 3.6;
-const FOOD_MOUTH_TARGET_X = CONSTELLATION_MOUTH_TARGET_X;
-const FOOD_MOUTH_TARGET_Y = CONSTELLATION_MOUTH_TARGET_Y;
-const FOOD_MOUTH_TARGET_Z = CONSTELLATION_TARGET_Z + 8;
-const FOOD_MOUTH_CAPTURE_RADIUS = 15;
-const FOOD_MOUTH_CAPTURE_Z_WINDOW = 22;
-const FOOD_MOUTH_STEER_START_Z = 64;
-const FOOD_MOUTH_STEER_FORCE = 0.00135;
-const FOOD_MOUTH_FLOW_MIN_Y = 0.06;
+const CONSTELLATION_LINE_DRAW_BRIGHTEN = 1.46;
+const CONSTELLATION_LINE_SETTLE_MS = 1800;
+const CONSTELLATION_LINE_SETTLE_MIN = 0.74;
+const FOOD_TRAVEL_Z_MIN = -70;
+const FOOD_TRAVEL_Z_MAX = 34;
+const FOOD_EDGE_PADDING = 18;
+const FOOD_TRAVEL_SPEED_MIN = 0.68;
+const FOOD_TRAVEL_SPEED_MAX = 1.32;
+const FOOD_DIRECTION_JITTER = 0.34;
+const FOOD_SPIN_CHANCE = 0.46;
+const FOOD_SPIN_SPEED_MIN = 0.0007;
+const FOOD_SPIN_SPEED_MAX = 0.0032;
 const NEBULA_POINTER_PARALLAX_X = 12;
 const NEBULA_POINTER_PARALLAX_Y = 8;
 const STAR_TWINKLE_SPEED = 0.00034;
@@ -148,10 +152,12 @@ let starDrift;
 let starVelX;
 let starVelY;
 let starColors;
+let starTwinklePhase;
 let deepStarCount = MIN_DEEP_STAR_COUNT;
 let deepStarPositions;
 let deepStarDrift;
 let deepStarColors;
+let deepStarTwinklePhase;
 
 let blackHoleCore;
 let blackHoleLensing;
@@ -198,6 +204,17 @@ let touchHoldPointerId = null;
 let touchHoldActivated = false;
 let powerAnchorClientX = null;
 let powerAnchorClientY = null;
+
+function getPlaneHalfExtentsAtZ(zValue) {
+    if (!camera) {
+        return { halfWidth: 1, halfHeight: 1 };
+    }
+
+    const distance = Math.max(0.001, Math.abs(camera.position.z - zValue));
+    const halfHeight = Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5)) * distance;
+    const halfWidth = halfHeight * camera.aspect;
+    return { halfWidth, halfHeight };
+}
 
 function setDepthColor(colorBuffer, index3, zValue, depth, nearRgb, farRgb) {
     if (!colorBuffer) {
@@ -477,18 +494,35 @@ function updateConstellationLineDrawRange(payload, elapsedMs) {
         0,
         1
     );
-    const visibleSegments = Math.floor(payload.segmentCount * revealProgress);
-    if (visibleSegments > payload.revealedSegments && payload.segmentFlashPairs) {
-        for (let segmentIdx = payload.revealedSegments; segmentIdx < visibleSegments; segmentIdx += 1) {
-            const index2 = segmentIdx * 2;
-            triggerConstellationJoinFlash(payload.segmentFlashPairs[index2], 1);
-            triggerConstellationJoinFlash(payload.segmentFlashPairs[index2 + 1], 0.9);
-        }
+    const segmentProgress = payload.segmentCount * revealProgress;
+    const fullSegments = Math.floor(segmentProgress);
+    const partial = segmentProgress - fullSegments;
+
+    payload.revealedSegments = Math.max(payload.revealedSegments, fullSegments);
+
+    let drawVertices = payload.revealedSegments * 2;
+    if (payload.revealedSegments < payload.segmentCount) {
+        const segmentIndex = payload.revealedSegments;
+        const index6 = segmentIndex * 6;
+        const ax = payload.base[index6];
+        const ay = payload.base[index6 + 1];
+        const az = payload.base[index6 + 2];
+        const bx = payload.base[index6 + 3];
+        const by = payload.base[index6 + 4];
+        const bz = payload.base[index6 + 5];
+
+        payload.live[index6] = ax;
+        payload.live[index6 + 1] = ay;
+        payload.live[index6 + 2] = az;
+        payload.live[index6 + 3] = THREE.MathUtils.lerp(ax, bx, partial);
+        payload.live[index6 + 4] = THREE.MathUtils.lerp(ay, by, partial);
+        payload.live[index6 + 5] = THREE.MathUtils.lerp(az, bz, partial);
+        drawVertices += 2;
     }
 
-    payload.revealedSegments = Math.max(payload.revealedSegments, visibleSegments);
-    payload.geometry.setDrawRange(0, payload.revealedSegments * 2);
-    return payload.revealedSegments >= payload.segmentCount;
+    payload.attribute.needsUpdate = true;
+    payload.geometry.setDrawRange(0, drawVertices);
+    return revealProgress >= 1;
 }
 
 function updateConstellationEntryMotion(nowMs) {
@@ -775,6 +809,7 @@ function createStars() {
     starVelX = new Float32Array(starCount);
     starVelY = new Float32Array(starCount);
     starColors = new Float32Array(starCount * 3);
+    starTwinklePhase = new Float32Array(starCount);
 
     for (let i = 0; i < starCount; i += 1) {
         const index3 = i * 3;
@@ -782,6 +817,7 @@ function createStars() {
         starDrift[i] = 0.65 + Math.random() * 0.75;
         starVelX[i] = 0;
         starVelY[i] = 0;
+        starTwinklePhase[i] = Math.random() * Math.PI * 2;
     }
 
     const starGeometry = new THREE.BufferGeometry();
@@ -823,17 +859,22 @@ function resetStar(index3, moveToBack, starIndex = Math.floor(index3 / 3)) {
         starVelX[starIndex] = 0;
         starVelY[starIndex] = 0;
     }
+    if (starTwinklePhase) {
+        starTwinklePhase[starIndex] = Math.random() * Math.PI * 2;
+    }
 }
 
 function createDeepStars() {
     deepStarPositions = new Float32Array(deepStarCount * 3);
     deepStarDrift = new Float32Array(deepStarCount);
     deepStarColors = new Float32Array(deepStarCount * 3);
+    deepStarTwinklePhase = new Float32Array(deepStarCount);
 
     for (let i = 0; i < deepStarCount; i += 1) {
         const index3 = i * 3;
-        resetDeepStar(index3, false);
+        resetDeepStar(index3, false, i);
         deepStarDrift[i] = 0.52 + Math.random() * 0.88;
+        deepStarTwinklePhase[i] = Math.random() * Math.PI * 2;
     }
 
     const deepGeometry = new THREE.BufferGeometry();
@@ -854,7 +895,7 @@ function createDeepStars() {
     scene.add(deepStars);
 }
 
-function resetDeepStar(index3, moveToBack) {
+function resetDeepStar(index3, moveToBack, starIndex = Math.floor(index3 / 3)) {
     deepStarPositions[index3] = (Math.random() - 0.5) * DEEP_STAR_FIELD_WIDTH;
     deepStarPositions[index3 + 1] = (Math.random() - 0.5) * DEEP_STAR_FIELD_HEIGHT;
 
@@ -871,6 +912,9 @@ function resetDeepStar(index3, moveToBack) {
         [0.84, 0.91, 0.99],
         [0.31, 0.46, 0.7]
     );
+    if (deepStarTwinklePhase) {
+        deepStarTwinklePhase[starIndex] = Math.random() * Math.PI * 2;
+    }
 }
 
 function createNebulaTexture(seedOffset = 0) {
@@ -1650,10 +1694,10 @@ function spawnFoodRow() {
     const shuffledFoods = [...foods].sort(() => 0.5 - Math.random());
 
     if (Math.random() > 0.42) {
-        createFoodMesh(shuffledFoods[0], THREE.MathUtils.randFloatSpread(30));
+        createFoodMesh(shuffledFoods[0]);
     } else {
-        createFoodMesh(shuffledFoods[0], -22 + Math.random() * 7);
-        createFoodMesh(shuffledFoods[1], 22 - Math.random() * 7);
+        createFoodMesh(shuffledFoods[0]);
+        createFoodMesh(shuffledFoods[1]);
     }
 
     while (foodMeshes.length > maxActiveFood) {
@@ -1661,7 +1705,7 @@ function spawnFoodRow() {
     }
 }
 
-function createFoodMesh(text, xPos) {
+function createFoodMesh(text) {
     const canvas = document.createElement("canvas");
     const context = canvas.getContext("2d");
     const fontSize = 62;
@@ -1695,13 +1739,68 @@ function createFoodMesh(text, xPos) {
         opacity: 0.96
     });
 
+    const halfMeshWidth = geometry.parameters.width * 0.5;
+    const halfMeshHeight = geometry.parameters.height * 0.5;
+    const z = THREE.MathUtils.randFloat(FOOD_TRAVEL_Z_MIN, FOOD_TRAVEL_Z_MAX);
+    const { halfWidth, halfHeight } = getPlaneHalfExtentsAtZ(z);
+    const edge = Math.floor(Math.random() * 4);
+    let startX = 0;
+    let startY = 0;
+    let endX = 0;
+    let endY = 0;
+
+    if (edge === 0) {
+        startX = -halfWidth - FOOD_EDGE_PADDING - halfMeshWidth;
+        startY = THREE.MathUtils.randFloat(-halfHeight, halfHeight);
+        endX = halfWidth + FOOD_EDGE_PADDING + halfMeshWidth;
+        endY = startY + THREE.MathUtils.randFloatSpread(halfHeight * FOOD_DIRECTION_JITTER);
+    } else if (edge === 1) {
+        startX = halfWidth + FOOD_EDGE_PADDING + halfMeshWidth;
+        startY = THREE.MathUtils.randFloat(-halfHeight, halfHeight);
+        endX = -halfWidth - FOOD_EDGE_PADDING - halfMeshWidth;
+        endY = startY + THREE.MathUtils.randFloatSpread(halfHeight * FOOD_DIRECTION_JITTER);
+    } else if (edge === 2) {
+        startY = halfHeight + FOOD_EDGE_PADDING + halfMeshHeight;
+        startX = THREE.MathUtils.randFloat(-halfWidth, halfWidth);
+        endY = -halfHeight - FOOD_EDGE_PADDING - halfMeshHeight;
+        endX = startX + THREE.MathUtils.randFloatSpread(halfWidth * FOOD_DIRECTION_JITTER);
+    } else {
+        startY = -halfHeight - FOOD_EDGE_PADDING - halfMeshHeight;
+        startX = THREE.MathUtils.randFloat(-halfWidth, halfWidth);
+        endY = halfHeight + FOOD_EDGE_PADDING + halfMeshHeight;
+        endX = startX + THREE.MathUtils.randFloatSpread(halfWidth * FOOD_DIRECTION_JITTER);
+    }
+
+    endX = THREE.MathUtils.clamp(
+        endX,
+        -halfWidth - FOOD_EDGE_PADDING - halfMeshWidth,
+        halfWidth + FOOD_EDGE_PADDING + halfMeshWidth
+    );
+    endY = THREE.MathUtils.clamp(
+        endY,
+        -halfHeight - FOOD_EDGE_PADDING - halfMeshHeight,
+        halfHeight + FOOD_EDGE_PADDING + halfMeshHeight
+    );
+
+    const dirX = endX - startX;
+    const dirY = endY - startY;
+    const length = Math.max(0.0001, Math.hypot(dirX, dirY));
+    const speed = THREE.MathUtils.randFloat(FOOD_TRAVEL_SPEED_MIN, FOOD_TRAVEL_SPEED_MAX);
+    const spinEnabled = Math.random() <= FOOD_SPIN_CHANCE;
+    const spinSpeed = spinEnabled
+        ? THREE.MathUtils.randFloat(FOOD_SPIN_SPEED_MIN, FOOD_SPIN_SPEED_MAX) * (Math.random() < 0.5 ? -1 : 1)
+        : 0;
+
     const mesh = new THREE.Mesh(geometry, material);
-    mesh.position.set(xPos, -64, 58 + Math.random() * 18);
+    mesh.position.set(startX, startY, z);
     mesh.rotation.x = FOOD_TILT_X;
+    mesh.rotation.z = THREE.MathUtils.randFloatSpread(0.28);
     mesh.userData = {
-        vx: 0,
-        vy: 0,
-        captured: false
+        vx: (dirX / length) * speed,
+        vy: (dirY / length) * speed,
+        travelLength: length,
+        traveled: 0,
+        spinSpeed
     };
 
     scene.add(mesh);
@@ -1803,7 +1902,7 @@ function updateBlackHole(delta, nowMs) {
     }
 }
 
-function updateDeepStars(delta) {
+function updateDeepStars(delta, nowMs) {
     if (!deepStars || !deepStarPositions || !deepStarDrift) {
         return;
     }
@@ -1813,8 +1912,14 @@ function updateDeepStars(delta) {
         deepStarPositions[index3 + 2] += DEEP_STAR_SPEED_Z * deepStarDrift[i] * delta;
 
         if (deepStarPositions[index3 + 2] > 660) {
-            resetDeepStar(index3, true);
+            resetDeepStar(index3, true, i);
         }
+
+        const depthMix = THREE.MathUtils.clamp((deepStarPositions[index3 + 2] + DEEP_STAR_FIELD_DEPTH * 0.5) / DEEP_STAR_FIELD_DEPTH, 0, 1);
+        const twinkle = 1 + Math.sin(nowMs * STAR_TWINKLE_SPEED * 0.86 + deepStarTwinklePhase[i]) * DEEP_STAR_TWINKLE_AMPLITUDE;
+        deepStarColors[index3] = THREE.MathUtils.clamp((0.31 + (0.84 - 0.31) * depthMix) * twinkle, 0, 1);
+        deepStarColors[index3 + 1] = THREE.MathUtils.clamp((0.46 + (0.91 - 0.46) * depthMix) * twinkle, 0, 1);
+        deepStarColors[index3 + 2] = THREE.MathUtils.clamp((0.7 + (0.99 - 0.7) * depthMix) * twinkle, 0, 1);
     }
 
     deepStars.geometry.attributes.position.needsUpdate = true;
@@ -1841,7 +1946,7 @@ function updateNebula(nowMs) {
     }
 }
 
-function updateStars(delta) {
+function updateStars(delta, nowMs) {
     const positions = starPositions;
     const hasInfluence = blackHoleRadius > 0.5;
 
@@ -1939,6 +2044,12 @@ function updateStars(delta) {
         positions[index3] = x;
         positions[index3 + 1] = y;
         positions[index3 + 2] = z;
+
+        const depthMix = THREE.MathUtils.clamp((z + STAR_FIELD_DEPTH * 0.5) / STAR_FIELD_DEPTH, 0, 1);
+        const twinkle = 1 + Math.sin(nowMs * STAR_TWINKLE_SPEED + starTwinklePhase[i]) * STAR_TWINKLE_AMPLITUDE;
+        starColors[index3] = THREE.MathUtils.clamp((0.56 + (0.97 - 0.56) * depthMix) * twinkle, 0, 1);
+        starColors[index3 + 1] = THREE.MathUtils.clamp((0.71 + (0.99 - 0.71) * depthMix) * twinkle, 0, 1);
+        starColors[index3 + 2] = THREE.MathUtils.clamp((0.95 + (1 - 0.95) * depthMix) * twinkle, 0, 1);
     }
 
     stars.geometry.attributes.position.needsUpdate = true;
@@ -1948,110 +2059,33 @@ function updateStars(delta) {
 }
 
 function updateFoodMeshes(delta) {
-    const hasInfluence = blackHoleRadius > 0.5;
-
-    const cameraX = camera.position.x;
-    const cameraY = camera.position.y;
-    const cameraZ = camera.position.z;
-    const rayX = pointerRayDir.x;
-    const rayY = pointerRayDir.y;
-    const rayZ = pointerRayDir.z;
-
-    const influenceRadius = Math.max(
-        FOOD_MIN_INFLUENCE_RADIUS,
-        blackHoleRadius * FOOD_INFLUENCE_MULT * (1 + blackHolePower * 0.24)
-    );
-    const influenceRadiusSq = influenceRadius * influenceRadius;
-    const horizonRadius = blackHoleRadius * FOOD_HORIZON_MULT * (1 + blackHolePower * 0.12);
-    const captureRadius = horizonRadius * FOOD_HORIZON_CAPTURE_MULT;
-    const gravityStrength = FOOD_GRAVITY_BASE * (1 + blackHolePower * 1.2);
-    const pullForceBase = FOOD_PULL_FORCE * (1 + blackHolePower * 0.75);
-    const swirlForceBase = FOOD_SWIRL_FORCE * (1 + blackHolePower * 0.5);
-    const flowSpeedMul = 1 + blackHolePower * FOOD_FLOW_POWER_MULT;
-    const drag = Math.pow(FOOD_DRAG, delta);
-
     for (let i = foodMeshes.length - 1; i >= 0; i -= 1) {
         const mesh = foodMeshes[i];
         const state = mesh.userData;
 
-        let ax = 0;
-        let ay = 0;
+        const stepX = state.vx * delta;
+        const stepY = state.vy * delta;
+        mesh.position.x += stepX;
+        mesh.position.y += stepY;
+        state.traveled += Math.hypot(stepX, stepY);
 
-        if (hasInfluence) {
-            const t = (mesh.position.z - cameraZ) / rayZ;
-            const mouseX = cameraX + rayX * t;
-            const mouseY = cameraY + rayY * t;
-            const dx = mesh.position.x - mouseX;
-            const dy = mesh.position.y - mouseY;
-            const distSq = dx * dx + dy * dy;
-
-            if (distSq < influenceRadiusSq) {
-                const dist = Math.sqrt(distSq) + 0.0001;
-                if (dist < captureRadius) {
-                    removeFoodAt(i);
-                    continue;
-                }
-
-                const nx = dx / dist;
-                const ny = dy / dist;
-                const tx = -ny;
-                const ty = nx;
-                const falloff = 1 - dist / influenceRadius;
-                const inverseDistSq = 1 / (distSq + 16);
-                const radialForce = gravityStrength * inverseDistSq * (0.34 + falloff * falloff * 2.5);
-                const horizonBoost = 1 + Math.pow(horizonRadius / Math.max(dist, horizonRadius), 2.2) * 2.1;
-
-                if (isRightPointerDown) {
-                    const pushForce = radialForce * FOOD_PUSH_FORCE;
-                    ax += nx * pushForce;
-                    ay += ny * pushForce;
-                } else {
-                    const orbitBias = THREE.MathUtils.clamp(1 - dist / influenceRadius, 0, 1);
-                    const pullForce = radialForce * pullForceBase * (1 + orbitBias * 0.52) * horizonBoost;
-                    const swirlDampNearCore = THREE.MathUtils.clamp((dist - captureRadius) / (influenceRadius - captureRadius + 0.0001), 0, 1);
-                    const swirlForce = radialForce * swirlForceBase * (0.3 + orbitBias * 0.98) * swirlDampNearCore;
-
-                    ax += -nx * pullForce + tx * swirlForce;
-                    ay += -ny * pullForce + ty * swirlForce;
-                    state.captured = true;
-                }
-            } else if (state.captured) {
-                state.captured = false;
-            }
+        if (state.spinSpeed) {
+            mesh.rotation.z += state.spinSpeed * delta;
         }
 
-        const mouthBlendRaw = THREE.MathUtils.clamp(
-            (FOOD_MOUTH_STEER_START_Z - mesh.position.z) / (FOOD_MOUTH_STEER_START_Z - FOOD_MOUTH_TARGET_Z),
-            0,
-            1
-        );
-        const mouthBlend = mouthBlendRaw * mouthBlendRaw * (3 - 2 * mouthBlendRaw);
-        const mouthDx = FOOD_MOUTH_TARGET_X - mesh.position.x;
-        const mouthDy = FOOD_MOUTH_TARGET_Y - mesh.position.y;
-        const mouthPull = FOOD_MOUTH_STEER_FORCE * (0.35 + mouthBlend * 1.4);
+        const progress = THREE.MathUtils.clamp(state.traveled / Math.max(0.0001, state.travelLength), 0, 1);
+        const fadeIn = THREE.MathUtils.clamp(progress / 0.15, 0, 1);
+        const fadeOut = THREE.MathUtils.clamp((1 - progress) / 0.22, 0, 1);
+        mesh.material.opacity = 0.96 * Math.min(fadeIn, fadeOut);
 
-        state.vx = (state.vx + ax * delta + mouthDx * mouthPull * delta) * drag;
-        state.vy = (state.vy + ay * delta + mouthDy * mouthPull * delta) * drag;
-
-        const flowY = THREE.MathUtils.lerp(FOOD_SPEED_Y, FOOD_MOUTH_FLOW_MIN_Y, mouthBlend);
-        mesh.position.x += state.vx * delta;
-        mesh.position.y += flowY * flowSpeedMul * delta + state.vy * delta;
-        mesh.position.z -= FOOD_SPEED_Z * flowSpeedMul * delta;
-
-        mesh.rotation.z += 0.0018 * delta + Math.abs(state.vx) * 0.011 + mouthBlend * 0.012;
-
-        mesh.material.opacity = THREE.MathUtils.clamp((mesh.position.z + 620) / 640, 0, 0.96);
-
-        const mouthDistSq =
-            (mesh.position.x - FOOD_MOUTH_TARGET_X) * (mesh.position.x - FOOD_MOUTH_TARGET_X) +
-            (mesh.position.y - FOOD_MOUTH_TARGET_Y) * (mesh.position.y - FOOD_MOUTH_TARGET_Y);
-        const nearMouthZ = Math.abs(mesh.position.z - FOOD_MOUTH_TARGET_Z) <= FOOD_MOUTH_CAPTURE_Z_WINDOW;
-        if (nearMouthZ && mouthDistSq <= FOOD_MOUTH_CAPTURE_RADIUS * FOOD_MOUTH_CAPTURE_RADIUS) {
-            removeFoodAt(i);
-            continue;
-        }
-
-        if (mesh.position.z < -620 || mesh.position.y > 300 || Math.abs(mesh.position.x) > 380) {
+        const { halfWidth, halfHeight } = getPlaneHalfExtentsAtZ(mesh.position.z);
+        const limitX = halfWidth + FOOD_EDGE_PADDING + 42;
+        const limitY = halfHeight + FOOD_EDGE_PADDING + 36;
+        if (
+            progress >= 1 ||
+            Math.abs(mesh.position.x) > limitX ||
+            Math.abs(mesh.position.y) > limitY
+        ) {
             removeFoodAt(i);
         }
     }
@@ -2063,7 +2097,6 @@ function updateConstellation(nowMs) {
     }
 
     updateConstellationEntryMotion(nowMs);
-    updateConstellationJoinFlashes(nowMs);
 
     const fadeProgress = THREE.MathUtils.clamp(
         (nowMs - constellationReadyAtMs) / CONSTELLATION_FADE_MS,
@@ -2095,11 +2128,25 @@ function updateConstellation(nowMs) {
         0.22,
         (0.05 + pulse * 0.016) * fadeProgress * visibilityBoost * CONSTELLATION_LINE_OPACITY_MULT
     );
+    const lineRevealProgress = THREE.MathUtils.clamp(
+        (nowMs - constellationReadyAtMs - CONSTELLATION_ENTRY_LINE_REVEAL_DELAY_MS) / CONSTELLATION_ENTRY_LINE_REVEAL_MS,
+        0,
+        1
+    );
+    const lineDrawBoost = 1 + (1 - lineRevealProgress) * CONSTELLATION_LINE_DRAW_BRIGHTEN;
+    const lineSettleProgress = THREE.MathUtils.clamp(
+        (nowMs - constellationReadyAtMs - CONSTELLATION_ENTRY_LINE_REVEAL_DELAY_MS - CONSTELLATION_ENTRY_LINE_REVEAL_MS) / CONSTELLATION_LINE_SETTLE_MS,
+        0,
+        1
+    );
+    const lineSettleMul = THREE.MathUtils.lerp(1, CONSTELLATION_LINE_SETTLE_MIN, lineSettleProgress);
+    const lineOpacity = Math.min(0.34, nearLineOpacity * lineDrawBoost * lineSettleMul);
+
     if (constellationLineMaterial) {
-        constellationLineMaterial.opacity = nearLineOpacity;
+        constellationLineMaterial.opacity = lineOpacity;
     }
     if (constellationLineFarMaterial) {
-        constellationLineFarMaterial.opacity = nearLineOpacity * CONSTELLATION_FAR_LINE_OPACITY_MULT;
+        constellationLineFarMaterial.opacity = lineOpacity * CONSTELLATION_FAR_LINE_OPACITY_MULT;
     }
     constellationGroup.position.copy(constellationBasePosition);
     constellationGroup.rotation.x = -0.02;
@@ -2134,26 +2181,11 @@ function animate(nowMs = performance.now()) {
     }
 
     updateNebula(nowMs);
-    updateDeepStars(delta);
+    updateDeepStars(delta, nowMs);
     updateShootingStars(delta, nowMs);
-    updateStars(delta);
+    updateStars(delta, nowMs);
     updateFoodMeshes(delta);
     updateConstellation(nowMs);
-
-    if (stars && stars.material) {
-        stars.material.opacity = THREE.MathUtils.clamp(
-            0.48 + Math.sin(nowMs * STAR_TWINKLE_SPEED) * STAR_TWINKLE_AMPLITUDE,
-            0.34,
-            0.62
-        );
-    }
-    if (deepStars && deepStars.material) {
-        deepStars.material.opacity = THREE.MathUtils.clamp(
-            0.22 + Math.cos(nowMs * STAR_TWINKLE_SPEED * 0.82 + 1.5) * DEEP_STAR_TWINKLE_AMPLITUDE,
-            0.14,
-            0.3
-        );
-    }
 
     renderer.render(scene, camera);
 }
