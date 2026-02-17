@@ -17,7 +17,7 @@ const foods = [
     "ıslak hamburger"
 ];
 
-const BUILD_ID = "20260217-constellation-v13-cinematic-plus";
+const BUILD_ID = "20260217-constellation-v14-four-side-entry-draw";
 
 const BASE_STAR_COUNT = 22000;
 const MIN_STAR_COUNT = 7000;
@@ -102,6 +102,14 @@ const CONSTELLATION_NODE_OPACITY_MULT = 1.08;
 const CONSTELLATION_LINE_OPACITY_MULT = 0.86;
 const CONSTELLATION_ENTRY_FLASH_MS = 1450;
 const CONSTELLATION_ENTRY_FLASH_BOOST = 2.3;
+const CONSTELLATION_ENTRY_MOVE_MS = 1350;
+const CONSTELLATION_ENTRY_STAGGER_MS = 760;
+const CONSTELLATION_ENTRY_SIDE_OFFSET = 540;
+const CONSTELLATION_ENTRY_SIDE_VARIANCE = 180;
+const CONSTELLATION_ENTRY_PERP_JITTER = 26;
+const CONSTELLATION_ENTRY_DEPTH_JITTER = 15;
+const CONSTELLATION_ENTRY_LINE_REVEAL_DELAY_MS = 180;
+const CONSTELLATION_ENTRY_LINE_REVEAL_MS = 1650;
 
 const SHOOTING_STAR_MIN_INTERVAL_MS = 2000;
 const SHOOTING_STAR_MAX_INTERVAL_MS = 5200;
@@ -141,6 +149,7 @@ let constellationDustMaterial;
 let constellationNodeMaterial;
 let constellationLineMaterial;
 let constellationLineFarMaterial;
+let constellationEntryState = null;
 let constellationReadyAtMs = 0;
 const constellationBasePosition = new THREE.Vector3();
 let nebulaGroup;
@@ -179,6 +188,184 @@ function setDepthColor(colorBuffer, index3, zValue, depth, nearRgb, farRgb) {
     colorBuffer[index3] = farRgb[0] + (nearRgb[0] - farRgb[0]) * depthMix;
     colorBuffer[index3 + 1] = farRgb[1] + (nearRgb[1] - farRgb[1]) * depthMix;
     colorBuffer[index3 + 2] = farRgb[2] + (nearRgb[2] - farRgb[2]) * depthMix;
+}
+
+function seededUnit(seed) {
+    const value = Math.sin(seed) * 43758.5453123;
+    return value - Math.floor(value);
+}
+
+function getEntrySideVector(x, y) {
+    if (Math.abs(x) >= Math.abs(y)) {
+        const sx = x >= 0 ? 1 : -1;
+        return { sx, sy: 0, px: 0, py: 1 };
+    }
+
+    const sy = y >= 0 ? 1 : -1;
+    return { sx: 0, sy, px: 1, py: 0 };
+}
+
+function sortLineTriplesForEntry(lineTriples, seedOffset) {
+    const segmentCount = Math.floor(lineTriples.length / 6);
+    if (segmentCount === 0) {
+        return [];
+    }
+
+    const segments = [];
+    for (let i = 0; i < segmentCount; i += 1) {
+        const index6 = i * 6;
+        const ax = lineTriples[index6];
+        const ay = lineTriples[index6 + 1];
+        const bx = lineTriples[index6 + 3];
+        const by = lineTriples[index6 + 4];
+        const mx = (ax + bx) * 0.5;
+        const my = (ay + by) * 0.5;
+        const side = getEntrySideVector(mx, my);
+        const radial = THREE.MathUtils.clamp(
+            Math.hypot(mx, my) / (CONSTELLATION_WORLD_WIDTH * 0.72),
+            0,
+            1
+        );
+        const sideBias = side.sx !== 0 ? 0.24 : 0.72;
+        const noise = seededUnit((i + 1) * 17.417 + seedOffset * 1.73);
+        const score = radial * 0.55 + noise * 0.33 + sideBias * 0.12;
+        segments.push({
+            score,
+            values: [
+                lineTriples[index6],
+                lineTriples[index6 + 1],
+                lineTriples[index6 + 2],
+                lineTriples[index6 + 3],
+                lineTriples[index6 + 4],
+                lineTriples[index6 + 5]
+            ]
+        });
+    }
+
+    segments.sort((a, b) => a.score - b.score);
+
+    const ordered = [];
+    for (let i = 0; i < segments.length; i += 1) {
+        ordered.push(...segments[i].values);
+    }
+    return ordered;
+}
+
+function createConstellationEntryPayload(baseTriples, seedOffset) {
+    const base = new Float32Array(baseTriples);
+    const start = new Float32Array(base.length);
+    const live = new Float32Array(base.length);
+    const delays = new Float32Array(Math.floor(base.length / 3));
+
+    for (let i = 0; i < delays.length; i += 1) {
+        const index3 = i * 3;
+        const x = base[index3];
+        const y = base[index3 + 1];
+        const z = base[index3 + 2];
+        const side = getEntrySideVector(x, y);
+
+        const r1 = seededUnit((i + 1) * 11.314 + seedOffset * 0.73);
+        const r2 = seededUnit((i + 1) * 23.217 + seedOffset * 1.11);
+        const r3 = seededUnit((i + 1) * 37.991 + seedOffset * 1.47);
+        const r4 = seededUnit((i + 1) * 53.743 + seedOffset * 1.93);
+
+        const pull = CONSTELLATION_ENTRY_SIDE_OFFSET + r1 * CONSTELLATION_ENTRY_SIDE_VARIANCE;
+        const jitter = (r2 - 0.5) * CONSTELLATION_ENTRY_PERP_JITTER;
+        const depthJitter = (r3 - 0.5) * CONSTELLATION_ENTRY_DEPTH_JITTER;
+
+        start[index3] = x + side.sx * pull + side.px * jitter;
+        start[index3 + 1] = y + side.sy * pull + side.py * jitter;
+        start[index3 + 2] = z + depthJitter;
+
+        live[index3] = start[index3];
+        live[index3 + 1] = start[index3 + 1];
+        live[index3 + 2] = start[index3 + 2];
+
+        delays[i] = r4 * CONSTELLATION_ENTRY_STAGGER_MS;
+    }
+
+    return {
+        base,
+        start,
+        live,
+        delays,
+        count: delays.length,
+        attribute: null,
+        geometry: null,
+        segmentCount: 0
+    };
+}
+
+function updateConstellationEntryPayload(payload, elapsedMs) {
+    if (!payload || !payload.attribute) {
+        return true;
+    }
+
+    let complete = true;
+    for (let i = 0; i < payload.count; i += 1) {
+        const index3 = i * 3;
+        const progress = (elapsedMs - payload.delays[i]) / CONSTELLATION_ENTRY_MOVE_MS;
+
+        if (progress <= 0) {
+            complete = false;
+            continue;
+        }
+
+        if (progress >= 1) {
+            payload.live[index3] = payload.base[index3];
+            payload.live[index3 + 1] = payload.base[index3 + 1];
+            payload.live[index3 + 2] = payload.base[index3 + 2];
+            continue;
+        }
+
+        complete = false;
+        const eased = progress * progress * (3 - 2 * progress);
+        payload.live[index3] = THREE.MathUtils.lerp(payload.start[index3], payload.base[index3], eased);
+        payload.live[index3 + 1] = THREE.MathUtils.lerp(payload.start[index3 + 1], payload.base[index3 + 1], eased);
+        payload.live[index3 + 2] = THREE.MathUtils.lerp(payload.start[index3 + 2], payload.base[index3 + 2], eased);
+    }
+
+    payload.attribute.needsUpdate = true;
+    return complete;
+}
+
+function updateConstellationLineDrawRange(payload, elapsedMs) {
+    if (!payload || !payload.geometry || payload.segmentCount === 0) {
+        return true;
+    }
+
+    const revealProgress = THREE.MathUtils.clamp(
+        (elapsedMs - CONSTELLATION_ENTRY_LINE_REVEAL_DELAY_MS) / CONSTELLATION_ENTRY_LINE_REVEAL_MS,
+        0,
+        1
+    );
+    const visibleSegments = Math.floor(payload.segmentCount * revealProgress);
+    payload.geometry.setDrawRange(0, visibleSegments * 2);
+    return visibleSegments >= payload.segmentCount;
+}
+
+function updateConstellationEntryMotion(nowMs) {
+    if (!constellationEntryState || !constellationEntryState.active) {
+        return;
+    }
+
+    const elapsedMs = Math.max(0, nowMs - constellationReadyAtMs);
+    const dustDone = updateConstellationEntryPayload(constellationEntryState.dust, elapsedMs);
+    const nodeDone = updateConstellationEntryPayload(constellationEntryState.nodes, elapsedMs);
+    const nearDone = updateConstellationEntryPayload(constellationEntryState.linesNear, elapsedMs);
+    const farDone = updateConstellationEntryPayload(constellationEntryState.linesFar, elapsedMs);
+    const nearDrawDone = updateConstellationLineDrawRange(constellationEntryState.linesNear, elapsedMs);
+    const farDrawDone = updateConstellationLineDrawRange(constellationEntryState.linesFar, elapsedMs);
+
+    if (dustDone && nodeDone && nearDone && farDone && nearDrawDone && farDrawDone) {
+        if (constellationEntryState.linesNear && constellationEntryState.linesNear.geometry) {
+            constellationEntryState.linesNear.geometry.setDrawRange(0, constellationEntryState.linesNear.segmentCount * 2);
+        }
+        if (constellationEntryState.linesFar && constellationEntryState.linesFar.geometry) {
+            constellationEntryState.linesFar.geometry.setDrawRange(0, constellationEntryState.linesFar.segmentCount * 2);
+        }
+        constellationEntryState.active = false;
+    }
 }
 
 function getViewportDimensions() {
@@ -1145,6 +1332,17 @@ function buildConstellation(image) {
         }
     }
 
+    const orderedLineTriples = sortLineTriplesForEntry(lineTriples, 11);
+    const orderedFarLineTriples = sortLineTriplesForEntry(lineTriplesFar, 17);
+    const dustEntryPayload = createConstellationEntryPayload(dustTriples, 3);
+    const nodeEntryPayload = createConstellationEntryPayload(nodeTriples, 5);
+    const nearLineEntryPayload = orderedLineTriples.length > 0
+        ? createConstellationEntryPayload(orderedLineTriples, 7)
+        : null;
+    const farLineEntryPayload = orderedFarLineTriples.length > 0
+        ? createConstellationEntryPayload(orderedFarLineTriples, 13)
+        : null;
+
     if (constellationGroup) {
         scene.remove(constellationGroup);
         constellationGroup.traverse((child) => {
@@ -1153,6 +1351,7 @@ function buildConstellation(image) {
             }
         });
     }
+    constellationEntryState = null;
     if (constellationDustMaterial) {
         constellationDustMaterial.dispose();
     }
@@ -1171,7 +1370,7 @@ function buildConstellation(image) {
     constellationGroup = new THREE.Group();
 
     const dustGeometry = new THREE.BufferGeometry();
-    dustGeometry.setAttribute("position", new THREE.Float32BufferAttribute(dustTriples, 3));
+    dustGeometry.setAttribute("position", new THREE.BufferAttribute(dustEntryPayload.live, 3));
     constellationDustMaterial = new THREE.PointsMaterial({
         color: 0xffffff,
         size: 1.06,
@@ -1185,9 +1384,10 @@ function buildConstellation(image) {
     const dustPoints = new THREE.Points(dustGeometry, constellationDustMaterial);
     dustPoints.renderOrder = 2;
     constellationGroup.add(dustPoints);
+    dustEntryPayload.attribute = dustGeometry.attributes.position;
 
     const nodeGeometry = new THREE.BufferGeometry();
-    nodeGeometry.setAttribute("position", new THREE.Float32BufferAttribute(nodeTriples, 3));
+    nodeGeometry.setAttribute("position", new THREE.BufferAttribute(nodeEntryPayload.live, 3));
     constellationNodeMaterial = new THREE.PointsMaterial({
         color: 0xe6f2ff,
         size: 2.2,
@@ -1201,10 +1401,12 @@ function buildConstellation(image) {
     const nodePoints = new THREE.Points(nodeGeometry, constellationNodeMaterial);
     nodePoints.renderOrder = 3;
     constellationGroup.add(nodePoints);
+    nodeEntryPayload.attribute = nodeGeometry.attributes.position;
 
-    if (lineTriples.length > 0) {
+    if (nearLineEntryPayload) {
         const lineGeometry = new THREE.BufferGeometry();
-        lineGeometry.setAttribute("position", new THREE.Float32BufferAttribute(lineTriples, 3));
+        lineGeometry.setAttribute("position", new THREE.BufferAttribute(nearLineEntryPayload.live, 3));
+        lineGeometry.setDrawRange(0, 0);
         constellationLineMaterial = new THREE.LineBasicMaterial({
             color: 0xc7daec,
             transparent: true,
@@ -1216,11 +1418,15 @@ function buildConstellation(image) {
         const lines = new THREE.LineSegments(lineGeometry, constellationLineMaterial);
         lines.renderOrder = 1;
         constellationGroup.add(lines);
+        nearLineEntryPayload.attribute = lineGeometry.attributes.position;
+        nearLineEntryPayload.geometry = lineGeometry;
+        nearLineEntryPayload.segmentCount = Math.floor(nearLineEntryPayload.base.length / 6);
     }
 
-    if (lineTriplesFar.length > 0) {
+    if (farLineEntryPayload) {
         const lineGeometryFar = new THREE.BufferGeometry();
-        lineGeometryFar.setAttribute("position", new THREE.Float32BufferAttribute(lineTriplesFar, 3));
+        lineGeometryFar.setAttribute("position", new THREE.BufferAttribute(farLineEntryPayload.live, 3));
+        lineGeometryFar.setDrawRange(0, 0);
         constellationLineFarMaterial = new THREE.LineBasicMaterial({
             color: 0xafc3d8,
             transparent: true,
@@ -1232,6 +1438,9 @@ function buildConstellation(image) {
         const farLines = new THREE.LineSegments(lineGeometryFar, constellationLineFarMaterial);
         farLines.renderOrder = 0;
         constellationGroup.add(farLines);
+        farLineEntryPayload.attribute = lineGeometryFar.attributes.position;
+        farLineEntryPayload.geometry = lineGeometryFar;
+        farLineEntryPayload.segmentCount = Math.floor(farLineEntryPayload.base.length / 6);
     }
 
     const mouthLocalX = (CONSTELLATION_MOUTH_U - 0.5) * worldWidth;
@@ -1247,6 +1456,13 @@ function buildConstellation(image) {
     constellationGroup.rotation.x = -0.02;
     constellationGroup.rotation.z = -0.006;
     constellationReadyAtMs = performance.now();
+    constellationEntryState = {
+        active: true,
+        dust: dustEntryPayload,
+        nodes: nodeEntryPayload,
+        linesNear: nearLineEntryPayload,
+        linesFar: farLineEntryPayload
+    };
     scene.add(constellationGroup);
 }
 
@@ -1641,6 +1857,8 @@ function updateConstellation(nowMs) {
     if (!constellationGroup || !constellationDustMaterial || !constellationNodeMaterial) {
         return;
     }
+
+    updateConstellationEntryMotion(nowMs);
 
     const fadeProgress = THREE.MathUtils.clamp(
         (nowMs - constellationReadyAtMs) / CONSTELLATION_FADE_MS,
