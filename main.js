@@ -17,7 +17,7 @@ const foods = [
     "ıslak hamburger"
 ];
 
-const BUILD_ID = "20260217-constellation-v7-detailed-scale-up";
+const BUILD_ID = "20260217-constellation-v8-fullscreen-background-blend";
 
 const BASE_STAR_COUNT = 22000;
 const MIN_STAR_COUNT = 7000;
@@ -25,6 +25,12 @@ const STAR_FIELD_WIDTH = 2200;
 const STAR_FIELD_HEIGHT = 1600;
 const STAR_FIELD_DEPTH = 2400;
 const STAR_SPEED_Z = 0.62;
+const DEEP_STAR_RATIO = 0.52;
+const MIN_DEEP_STAR_COUNT = 3800;
+const DEEP_STAR_FIELD_WIDTH = STAR_FIELD_WIDTH * 1.8;
+const DEEP_STAR_FIELD_HEIGHT = STAR_FIELD_HEIGHT * 1.7;
+const DEEP_STAR_FIELD_DEPTH = STAR_FIELD_DEPTH * 1.45;
+const DEEP_STAR_SPEED_Z = 0.22;
 
 const FOOD_SPEED_Z = 0.55;
 const FOOD_SPEED_Y = 0.30;
@@ -69,9 +75,9 @@ const FOOD_DRAG = 0.86;
 const FOOD_HORIZON_CAPTURE_MULT = 1.1;
 
 const CONSTELLATION_SCAN_MAX_WIDTH = 560;
-const CONSTELLATION_WORLD_WIDTH = 340;
-const CONSTELLATION_SCALE = 2.28;
-const CONSTELLATION_TARGET_Z = -165;
+const CONSTELLATION_WORLD_WIDTH = 360;
+const CONSTELLATION_SCALE = 3.15;
+const CONSTELLATION_TARGET_Z = -240;
 const CONSTELLATION_MOUTH_U = 0.505;
 const CONSTELLATION_MOUTH_V = 0.358;
 const CONSTELLATION_MOUTH_TARGET_X = 0;
@@ -84,11 +90,15 @@ let scene;
 let camera;
 let renderer;
 let stars;
+let deepStars;
 let starCount = BASE_STAR_COUNT;
 let starPositions;
 let starDrift;
 let starVelX;
 let starVelY;
+let deepStarCount = MIN_DEEP_STAR_COUNT;
+let deepStarPositions;
+let deepStarDrift;
 
 let blackHoleCore;
 let blackHoleRadius = MIN_BLACKHOLE_RADIUS;
@@ -150,6 +160,7 @@ function resolvePerformanceProfile() {
     }
 
     starCount = Math.max(MIN_STAR_COUNT, Math.min(BASE_STAR_COUNT, Math.round(BASE_STAR_COUNT * starMultiplier)));
+    deepStarCount = Math.max(MIN_DEEP_STAR_COUNT, Math.round(starCount * DEEP_STAR_RATIO));
     maxActiveFood = Math.max(28, Math.round(FOOD_MAX_ACTIVE * foodMultiplier));
 }
 
@@ -178,6 +189,7 @@ function init() {
     resolvePerformanceProfile();
     loadConstellationFromImage("husospace.png");
     createStars();
+    createDeepStars();
     createBlackHoleVisual();
 
     for (let i = 0; i < 4; i += 1) {
@@ -348,11 +360,11 @@ function createStars() {
     starGeometry.setAttribute("position", new THREE.BufferAttribute(starPositions, 3));
 
     const starMaterial = new THREE.PointsMaterial({
-        color: 0xffffff,
-        size: 0.82,
+        color: 0xf5fbff,
+        size: 0.78,
         sizeAttenuation: true,
         transparent: true,
-        opacity: 0.56,
+        opacity: 0.48,
         depthWrite: false
     });
 
@@ -373,6 +385,44 @@ function resetStar(index3, moveToBack, starIndex = Math.floor(index3 / 3)) {
     if (starVelX && starVelY) {
         starVelX[starIndex] = 0;
         starVelY[starIndex] = 0;
+    }
+}
+
+function createDeepStars() {
+    deepStarPositions = new Float32Array(deepStarCount * 3);
+    deepStarDrift = new Float32Array(deepStarCount);
+
+    for (let i = 0; i < deepStarCount; i += 1) {
+        const index3 = i * 3;
+        resetDeepStar(index3, false);
+        deepStarDrift[i] = 0.52 + Math.random() * 0.88;
+    }
+
+    const deepGeometry = new THREE.BufferGeometry();
+    deepGeometry.setAttribute("position", new THREE.BufferAttribute(deepStarPositions, 3));
+
+    const deepMaterial = new THREE.PointsMaterial({
+        color: 0xbdd6f7,
+        size: 0.62,
+        sizeAttenuation: true,
+        transparent: true,
+        opacity: 0.22,
+        depthWrite: false
+    });
+
+    deepStars = new THREE.Points(deepGeometry, deepMaterial);
+    deepStars.renderOrder = 0;
+    scene.add(deepStars);
+}
+
+function resetDeepStar(index3, moveToBack) {
+    deepStarPositions[index3] = (Math.random() - 0.5) * DEEP_STAR_FIELD_WIDTH;
+    deepStarPositions[index3 + 1] = (Math.random() - 0.5) * DEEP_STAR_FIELD_HEIGHT;
+
+    if (moveToBack) {
+        deepStarPositions[index3 + 2] = -DEEP_STAR_FIELD_DEPTH * 0.58 - Math.random() * DEEP_STAR_FIELD_DEPTH * 0.34;
+    } else {
+        deepStarPositions[index3 + 2] = (Math.random() - 0.5) * DEEP_STAR_FIELD_DEPTH;
     }
 }
 
@@ -732,7 +782,7 @@ function buildConstellation(image) {
     dustGeometry.setAttribute("position", new THREE.Float32BufferAttribute(dustTriples, 3));
     constellationDustMaterial = new THREE.PointsMaterial({
         color: 0xffffff,
-        size: 1.24,
+        size: 1.06,
         sizeAttenuation: true,
         transparent: true,
         opacity: 0,
@@ -747,8 +797,8 @@ function buildConstellation(image) {
     const nodeGeometry = new THREE.BufferGeometry();
     nodeGeometry.setAttribute("position", new THREE.Float32BufferAttribute(nodeTriples, 3));
     constellationNodeMaterial = new THREE.PointsMaterial({
-        color: 0xeaf5ff,
-        size: 2.55,
+        color: 0xe6f2ff,
+        size: 2.2,
         sizeAttenuation: true,
         transparent: true,
         opacity: 0,
@@ -764,12 +814,12 @@ function buildConstellation(image) {
         const lineGeometry = new THREE.BufferGeometry();
         lineGeometry.setAttribute("position", new THREE.Float32BufferAttribute(lineTriples, 3));
         constellationLineMaterial = new THREE.LineBasicMaterial({
-            color: 0xd6ecff,
+            color: 0xc7daec,
             transparent: true,
             opacity: 0,
             depthWrite: false,
             depthTest: true,
-            blending: THREE.AdditiveBlending
+            blending: THREE.NormalBlending
         });
         const lines = new THREE.LineSegments(lineGeometry, constellationLineMaterial);
         lines.renderOrder = 1;
@@ -786,8 +836,8 @@ function buildConstellation(image) {
         CONSTELLATION_TARGET_Z
     );
     constellationGroup.position.copy(constellationBasePosition);
-    constellationGroup.rotation.x = -0.013;
-    constellationGroup.rotation.z = -0.01;
+    constellationGroup.rotation.x = -0.02;
+    constellationGroup.rotation.z = -0.006;
     constellationReadyAtMs = performance.now();
     scene.add(constellationGroup);
 }
@@ -933,6 +983,23 @@ function updateBlackHole(delta, nowMs) {
     blackHoleCore.quaternion.copy(camera.quaternion);
 
     blackHoleCore.scale.set(visualRadius, visualRadius, 1);
+}
+
+function updateDeepStars(delta) {
+    if (!deepStars || !deepStarPositions || !deepStarDrift) {
+        return;
+    }
+
+    for (let i = 0; i < deepStarCount; i += 1) {
+        const index3 = i * 3;
+        deepStarPositions[index3 + 2] += DEEP_STAR_SPEED_Z * deepStarDrift[i] * delta;
+
+        if (deepStarPositions[index3 + 2] > 660) {
+            resetDeepStar(index3, true);
+        }
+    }
+
+    deepStars.geometry.attributes.position.needsUpdate = true;
 }
 
 function updateStars(delta) {
@@ -1139,16 +1206,16 @@ function updateConstellation(nowMs) {
         1
     );
     const pulse = 0.92 + Math.sin(nowMs * 0.0017) * 0.08;
-    constellationDustMaterial.opacity = (0.09 + pulse * 0.03) * fadeProgress;
-    constellationNodeMaterial.opacity = (0.28 + pulse * 0.065) * fadeProgress;
+    constellationDustMaterial.opacity = (0.045 + pulse * 0.014) * fadeProgress;
+    constellationNodeMaterial.opacity = (0.12 + pulse * 0.028) * fadeProgress;
 
     if (constellationLineMaterial) {
-        constellationLineMaterial.opacity = (0.15 + pulse * 0.045) * fadeProgress;
+        constellationLineMaterial.opacity = (0.05 + pulse * 0.016) * fadeProgress;
     }
 
-    constellationGroup.position.x = constellationBasePosition.x + Math.sin(nowMs * 0.00007) * 1.3;
-    constellationGroup.position.y = constellationBasePosition.y + Math.sin(nowMs * 0.00009) * 1.1;
-    constellationGroup.rotation.z = -0.01 + Math.sin(nowMs * 0.00005) * 0.015;
+    constellationGroup.position.x = constellationBasePosition.x + Math.sin(nowMs * 0.00006) * 1.0;
+    constellationGroup.position.y = constellationBasePosition.y + Math.sin(nowMs * 0.00008) * 0.9;
+    constellationGroup.rotation.z = -0.006 + Math.sin(nowMs * 0.000045) * 0.011;
 }
 
 function animate(nowMs = performance.now()) {
@@ -1178,6 +1245,7 @@ function animate(nowMs = performance.now()) {
         spawnAccumulatorMs = dynamicSpawnInterval * 0.35;
     }
 
+    updateDeepStars(delta);
     updateStars(delta);
     updateFoodMeshes(delta);
     updateConstellation(nowMs);
