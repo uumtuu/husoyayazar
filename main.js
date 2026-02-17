@@ -17,7 +17,7 @@ const foods = [
     "ıslak hamburger"
 ];
 
-const BUILD_ID = "20260217-constellation-v15-join-flash";
+const BUILD_ID = "20260217-constellation-v16-four-limb-draw-join-flash";
 
 const BASE_STAR_COUNT = 22000;
 const MIN_STAR_COUNT = 7000;
@@ -241,14 +241,180 @@ function createConstellationJoinFlashData(lineTriplesNear, lineTriplesFar) {
     return { positions, lookup };
 }
 
+function pickSeedNode(nodePositions, scorer, filterFn = null) {
+    const nodeCount = Math.floor(nodePositions.length / 3);
+    let bestIndex = -1;
+    let bestScore = -Infinity;
+
+    for (let i = 0; i < nodeCount; i += 1) {
+        const index3 = i * 3;
+        const x = nodePositions[index3];
+        const y = nodePositions[index3 + 1];
+        if (filterFn && !filterFn(x, y, i)) {
+            continue;
+        }
+
+        const score = scorer(x, y, i);
+        if (score > bestScore) {
+            bestScore = score;
+            bestIndex = i;
+        }
+    }
+
+    return bestIndex;
+}
+
+function createLimbSeedNodes(nodePositions) {
+    const nodeCount = Math.floor(nodePositions.length / 3);
+    if (nodeCount === 0) {
+        return [];
+    }
+
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (let i = 0; i < nodeCount; i += 1) {
+        const y = nodePositions[i * 3 + 1];
+        minY = Math.min(minY, y);
+        maxY = Math.max(maxY, y);
+    }
+
+    const yRange = Math.max(0.0001, maxY - minY);
+    const armMinY = minY + yRange * 0.56;
+    const legMaxY = minY + yRange * 0.4;
+
+    const scorers = [
+        (x, y) => -x * 1.08 + y * 0.28, // Sol kol
+        (x, y) => x * 1.08 + y * 0.28,  // Sag kol
+        (x, y) => -x * 1.08 - y * 0.52, // Sol ayak
+        (x, y) => x * 1.08 - y * 0.52   // Sag ayak
+    ];
+    const filters = [
+        (x, y) => y >= armMinY,
+        (x, y) => y >= armMinY,
+        (x, y) => y <= legMaxY,
+        (x, y) => y <= legMaxY
+    ];
+
+    const seeds = scorers.map((scorer, idx) => {
+        const withFilter = pickSeedNode(nodePositions, scorer, filters[idx]);
+        if (withFilter >= 0) {
+            return withFilter;
+        }
+        return pickSeedNode(nodePositions, scorer);
+    });
+
+    const used = new Set();
+    for (let i = 0; i < seeds.length; i += 1) {
+        if (seeds[i] >= 0 && !used.has(seeds[i])) {
+            used.add(seeds[i]);
+            continue;
+        }
+
+        const replacement = pickSeedNode(
+            nodePositions,
+            (x, y, nodeIndex) => scorers[i](x, y) + seededUnit((nodeIndex + 1) * (i + 3.37)) * 0.015,
+            (x, y, nodeIndex) => !used.has(nodeIndex)
+        );
+        if (replacement >= 0) {
+            seeds[i] = replacement;
+            used.add(replacement);
+        }
+    }
+
+    return seeds.filter((seed) => seed >= 0);
+}
+
+function buildNodeDistances(adjacency, seedNode) {
+    const nodeCount = adjacency.length;
+    const distances = new Int32Array(nodeCount);
+    distances.fill(-1);
+
+    if (seedNode < 0 || seedNode >= nodeCount) {
+        return distances;
+    }
+
+    const queue = new Int32Array(nodeCount);
+    let queueHead = 0;
+    let queueTail = 0;
+
+    distances[seedNode] = 0;
+    queue[queueTail] = seedNode;
+    queueTail += 1;
+
+    while (queueHead < queueTail) {
+        const node = queue[queueHead];
+        queueHead += 1;
+        const nextDistance = distances[node] + 1;
+        const neighbors = adjacency[node];
+
+        for (let i = 0; i < neighbors.length; i += 1) {
+            const neighbor = neighbors[i];
+            if (distances[neighbor] !== -1) {
+                continue;
+            }
+            distances[neighbor] = nextDistance;
+            queue[queueTail] = neighbor;
+            queueTail += 1;
+        }
+    }
+
+    return distances;
+}
+
 function sortLineTriplesForEntry(lineTriples, seedOffset) {
     const segmentCount = Math.floor(lineTriples.length / 6);
     if (segmentCount === 0) {
         return [];
     }
 
-    const segments = [];
+    const nodeByKey = new Map();
+    const nodePositions = [];
+    const segmentNodeA = new Int32Array(segmentCount);
+    const segmentNodeB = new Int32Array(segmentCount);
+
+    const getNodeId = (x, y, z) => {
+        const key = pointKey(x, y, z);
+        if (!nodeByKey.has(key)) {
+            const nodeId = Math.floor(nodePositions.length / 3);
+            nodeByKey.set(key, nodeId);
+            nodePositions.push(x, y, z);
+        }
+        return nodeByKey.get(key);
+    };
+
     for (let i = 0; i < segmentCount; i += 1) {
+        const index6 = i * 6;
+        const ax = lineTriples[index6];
+        const ay = lineTriples[index6 + 1];
+        const az = lineTriples[index6 + 2];
+        const bx = lineTriples[index6 + 3];
+        const by = lineTriples[index6 + 4];
+        const bz = lineTriples[index6 + 5];
+        segmentNodeA[i] = getNodeId(ax, ay, az);
+        segmentNodeB[i] = getNodeId(bx, by, bz);
+    }
+
+    const nodeCount = Math.floor(nodePositions.length / 3);
+    const adjacency = Array.from({ length: nodeCount }, () => []);
+    for (let i = 0; i < segmentCount; i += 1) {
+        const a = segmentNodeA[i];
+        const b = segmentNodeB[i];
+        if (a === b) {
+            continue;
+        }
+        adjacency[a].push(b);
+        adjacency[b].push(a);
+    }
+
+    const seeds = createLimbSeedNodes(nodePositions);
+    const seedDistances = seeds.map((seed) => buildNodeDistances(adjacency, seed));
+    const groupedBySeed = Array.from({ length: seeds.length }, () => new Map());
+    const leftovers = [];
+    let maxLevel = 0;
+
+    for (let i = 0; i < segmentCount; i += 1) {
+        const a = segmentNodeA[i];
+        const b = segmentNodeB[i];
         const index6 = i * 6;
         const ax = lineTriples[index6];
         const ay = lineTriples[index6 + 1];
@@ -256,38 +422,108 @@ function sortLineTriplesForEntry(lineTriples, seedOffset) {
         const by = lineTriples[index6 + 4];
         const mx = (ax + bx) * 0.5;
         const my = (ay + by) * 0.5;
-        const side = getEntrySideVector(mx, my);
-        const radial = THREE.MathUtils.clamp(
-            Math.hypot(mx, my) / (CONSTELLATION_WORLD_WIDTH * 0.72),
-            0,
-            1
-        );
-        const sideBias = side.sx !== 0 ? 0.24 : 0.72;
-        const noise = seededUnit((i + 1) * 17.417 + seedOffset * 1.73);
-        const score = radial * 0.55 + noise * 0.33 + sideBias * 0.12;
-        segments.push({
-            score,
-            values: [
-                lineTriples[index6],
-                lineTriples[index6 + 1],
-                lineTriples[index6 + 2],
-                lineTriples[index6 + 3],
-                lineTriples[index6 + 4],
-                lineTriples[index6 + 5]
-            ]
+        const radial = Math.hypot(mx, my);
+
+        let bestSeedIndex = -1;
+        let bestLevel = Number.POSITIVE_INFINITY;
+        let bestTie = Number.POSITIVE_INFINITY;
+
+        for (let seedIdx = 0; seedIdx < seedDistances.length; seedIdx += 1) {
+            const distanceMap = seedDistances[seedIdx];
+            const da = distanceMap[a];
+            const db = distanceMap[b];
+            if (da < 0 && db < 0) {
+                continue;
+            }
+
+            const level = Math.min(
+                da < 0 ? Number.MAX_SAFE_INTEGER : da,
+                db < 0 ? Number.MAX_SAFE_INTEGER : db
+            );
+            const seedNode = seeds[seedIdx];
+            const seedX = nodePositions[seedNode * 3];
+            const seedY = nodePositions[seedNode * 3 + 1];
+            const tie = Math.hypot(mx - seedX, my - seedY) + seededUnit((i + 1) * (seedIdx + 9.73) + seedOffset * 1.51) * 0.19;
+
+            if (level < bestLevel || (level === bestLevel && tie < bestTie)) {
+                bestLevel = level;
+                bestTie = tie;
+                bestSeedIndex = seedIdx;
+            }
+        }
+
+        if (bestSeedIndex < 0 || !Number.isFinite(bestLevel)) {
+            leftovers.push({
+                index: i,
+                score: radial + seededUnit((i + 1) * 31.7 + seedOffset * 2.3) * 4.5
+            });
+            continue;
+        }
+
+        const bucketMap = groupedBySeed[bestSeedIndex];
+        if (!bucketMap.has(bestLevel)) {
+            bucketMap.set(bestLevel, []);
+        }
+        bucketMap.get(bestLevel).push({
+            index: i,
+            tie: bestTie
         });
+        maxLevel = Math.max(maxLevel, bestLevel);
     }
 
-    segments.sort((a, b) => a.score - b.score);
+    const orderedSegmentIndices = [];
+    const added = new Uint8Array(segmentCount);
+    for (let level = 0; level <= maxLevel; level += 1) {
+        for (let seedIdx = 0; seedIdx < groupedBySeed.length; seedIdx += 1) {
+            const bucket = groupedBySeed[seedIdx].get(level);
+            if (!bucket || bucket.length === 0) {
+                continue;
+            }
+            bucket.sort((a, b) => a.tie - b.tie);
+            for (let i = 0; i < bucket.length; i += 1) {
+                const segmentIndex = bucket[i].index;
+                if (added[segmentIndex]) {
+                    continue;
+                }
+                added[segmentIndex] = 1;
+                orderedSegmentIndices.push(segmentIndex);
+            }
+        }
+    }
+
+    leftovers.sort((a, b) => a.score - b.score);
+    for (let i = 0; i < leftovers.length; i += 1) {
+        const segmentIndex = leftovers[i].index;
+        if (added[segmentIndex]) {
+            continue;
+        }
+        added[segmentIndex] = 1;
+        orderedSegmentIndices.push(segmentIndex);
+    }
+
+    for (let i = 0; i < segmentCount; i += 1) {
+        if (added[i]) {
+            continue;
+        }
+        orderedSegmentIndices.push(i);
+    }
 
     const ordered = [];
-    for (let i = 0; i < segments.length; i += 1) {
-        ordered.push(...segments[i].values);
+    for (let i = 0; i < orderedSegmentIndices.length; i += 1) {
+        const index6 = orderedSegmentIndices[i] * 6;
+        ordered.push(
+            lineTriples[index6],
+            lineTriples[index6 + 1],
+            lineTriples[index6 + 2],
+            lineTriples[index6 + 3],
+            lineTriples[index6 + 4],
+            lineTriples[index6 + 5]
+        );
     }
     return ordered;
 }
 
-function createConstellationEntryPayload(baseTriples, seedOffset, flashLookup = null) {
+function createConstellationEntryPayload(baseTriples, seedOffset, flashLookup = null, entryFlashEnabled = true) {
     const base = new Float32Array(baseTriples);
     const start = new Float32Array(base.length);
     const live = new Float32Array(base.length);
@@ -337,9 +573,27 @@ function createConstellationEntryPayload(baseTriples, seedOffset, flashLookup = 
         attribute: null,
         geometry: null,
         segmentCount: 0,
+        revealedSegments: 0,
+        segmentFlashPairs: null,
+        entryFlashEnabled,
         flashIndices,
         completed
     };
+}
+
+function createSegmentFlashPairs(payload) {
+    if (!payload || !payload.flashIndices || payload.segmentCount === 0) {
+        return null;
+    }
+
+    const pairs = new Int32Array(payload.segmentCount * 2);
+    for (let segmentIdx = 0; segmentIdx < payload.segmentCount; segmentIdx += 1) {
+        const pointA = segmentIdx * 2;
+        const pointB = pointA + 1;
+        pairs[segmentIdx * 2] = pointA < payload.flashIndices.length ? payload.flashIndices[pointA] : -1;
+        pairs[segmentIdx * 2 + 1] = pointB < payload.flashIndices.length ? payload.flashIndices[pointB] : -1;
+    }
+    return pairs;
 }
 
 function triggerConstellationJoinFlash(flashIndex, strength = 1) {
@@ -408,7 +662,7 @@ function updateConstellationEntryPayload(payload, elapsedMs) {
 
             if (!payload.completed[i]) {
                 payload.completed[i] = 1;
-                if (payload.flashIndices) {
+                if (payload.entryFlashEnabled && payload.flashIndices) {
                     triggerConstellationJoinFlash(payload.flashIndices[i], 1);
                 }
             }
@@ -437,8 +691,17 @@ function updateConstellationLineDrawRange(payload, elapsedMs) {
         1
     );
     const visibleSegments = Math.floor(payload.segmentCount * revealProgress);
-    payload.geometry.setDrawRange(0, visibleSegments * 2);
-    return visibleSegments >= payload.segmentCount;
+    if (visibleSegments > payload.revealedSegments && payload.segmentFlashPairs) {
+        for (let segmentIdx = payload.revealedSegments; segmentIdx < visibleSegments; segmentIdx += 1) {
+            const index2 = segmentIdx * 2;
+            triggerConstellationJoinFlash(payload.segmentFlashPairs[index2], 1);
+            triggerConstellationJoinFlash(payload.segmentFlashPairs[index2 + 1], 0.9);
+        }
+    }
+
+    payload.revealedSegments = Math.max(payload.revealedSegments, visibleSegments);
+    payload.geometry.setDrawRange(0, payload.revealedSegments * 2);
+    return payload.revealedSegments >= payload.segmentCount;
 }
 
 function updateConstellationEntryMotion(nowMs) {
@@ -1435,10 +1698,10 @@ function buildConstellation(image) {
     const dustEntryPayload = createConstellationEntryPayload(dustTriples, 3);
     const nodeEntryPayload = createConstellationEntryPayload(nodeTriples, 5);
     const nearLineEntryPayload = orderedLineTriples.length > 0
-        ? createConstellationEntryPayload(orderedLineTriples, 7, joinFlashData.lookup)
+        ? createConstellationEntryPayload(orderedLineTriples, 7, joinFlashData.lookup, false)
         : null;
     const farLineEntryPayload = orderedFarLineTriples.length > 0
-        ? createConstellationEntryPayload(orderedFarLineTriples, 13, joinFlashData.lookup)
+        ? createConstellationEntryPayload(orderedFarLineTriples, 13, joinFlashData.lookup, false)
         : null;
 
     if (constellationGroup) {
@@ -1547,6 +1810,8 @@ function buildConstellation(image) {
         nearLineEntryPayload.attribute = lineGeometry.attributes.position;
         nearLineEntryPayload.geometry = lineGeometry;
         nearLineEntryPayload.segmentCount = Math.floor(nearLineEntryPayload.base.length / 6);
+        nearLineEntryPayload.revealedSegments = 0;
+        nearLineEntryPayload.segmentFlashPairs = createSegmentFlashPairs(nearLineEntryPayload);
     }
 
     if (farLineEntryPayload) {
@@ -1567,6 +1832,8 @@ function buildConstellation(image) {
         farLineEntryPayload.attribute = lineGeometryFar.attributes.position;
         farLineEntryPayload.geometry = lineGeometryFar;
         farLineEntryPayload.segmentCount = Math.floor(farLineEntryPayload.base.length / 6);
+        farLineEntryPayload.revealedSegments = 0;
+        farLineEntryPayload.segmentFlashPairs = createSegmentFlashPairs(farLineEntryPayload);
     }
 
     const mouthLocalX = (CONSTELLATION_MOUTH_U - 0.5) * worldWidth;
