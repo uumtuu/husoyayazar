@@ -17,7 +17,7 @@ const foods = [
     "ıslak hamburger"
 ];
 
-const BUILD_ID = "20260217-constellation-v14-four-side-entry-draw";
+const BUILD_ID = "20260217-constellation-v15-join-flash";
 
 const BASE_STAR_COUNT = 22000;
 const MIN_STAR_COUNT = 7000;
@@ -110,6 +110,8 @@ const CONSTELLATION_ENTRY_PERP_JITTER = 26;
 const CONSTELLATION_ENTRY_DEPTH_JITTER = 15;
 const CONSTELLATION_ENTRY_LINE_REVEAL_DELAY_MS = 180;
 const CONSTELLATION_ENTRY_LINE_REVEAL_MS = 1650;
+const CONSTELLATION_JOIN_FLASH_DURATION_MS = 260;
+const CONSTELLATION_JOIN_FLASH_SIZE = 3.6;
 
 const SHOOTING_STAR_MIN_INTERVAL_MS = 2000;
 const SHOOTING_STAR_MAX_INTERVAL_MS = 5200;
@@ -149,6 +151,11 @@ let constellationDustMaterial;
 let constellationNodeMaterial;
 let constellationLineMaterial;
 let constellationLineFarMaterial;
+let constellationJoinFlashMaterial;
+let constellationJoinFlashGeometry;
+let constellationJoinFlashColors;
+let constellationJoinFlashIntensity;
+let constellationJoinFlashLastMs = performance.now();
 let constellationEntryState = null;
 let constellationReadyAtMs = 0;
 const constellationBasePosition = new THREE.Vector3();
@@ -205,6 +212,35 @@ function getEntrySideVector(x, y) {
     return { sx: 0, sy, px: 1, py: 0 };
 }
 
+function pointKey(x, y, z) {
+    return `${x.toFixed(4)}|${y.toFixed(4)}|${z.toFixed(4)}`;
+}
+
+function createConstellationJoinFlashData(lineTriplesNear, lineTriplesFar) {
+    const positions = [];
+    const lookup = new Map();
+
+    const addPoint = (x, y, z) => {
+        const key = pointKey(x, y, z);
+        if (lookup.has(key)) {
+            return;
+        }
+        lookup.set(key, Math.floor(positions.length / 3));
+        positions.push(x, y, z);
+    };
+
+    const ingest = (triples) => {
+        for (let i = 0; i < triples.length; i += 6) {
+            addPoint(triples[i], triples[i + 1], triples[i + 2]);
+            addPoint(triples[i + 3], triples[i + 4], triples[i + 5]);
+        }
+    };
+
+    ingest(lineTriplesNear);
+    ingest(lineTriplesFar);
+    return { positions, lookup };
+}
+
 function sortLineTriplesForEntry(lineTriples, seedOffset) {
     const segmentCount = Math.floor(lineTriples.length / 6);
     if (segmentCount === 0) {
@@ -251,11 +287,13 @@ function sortLineTriplesForEntry(lineTriples, seedOffset) {
     return ordered;
 }
 
-function createConstellationEntryPayload(baseTriples, seedOffset) {
+function createConstellationEntryPayload(baseTriples, seedOffset, flashLookup = null) {
     const base = new Float32Array(baseTriples);
     const start = new Float32Array(base.length);
     const live = new Float32Array(base.length);
     const delays = new Float32Array(Math.floor(base.length / 3));
+    const flashIndices = flashLookup ? new Int32Array(Math.floor(base.length / 3)) : null;
+    const completed = new Uint8Array(Math.floor(base.length / 3));
 
     for (let i = 0; i < delays.length; i += 1) {
         const index3 = i * 3;
@@ -282,6 +320,12 @@ function createConstellationEntryPayload(baseTriples, seedOffset) {
         live[index3 + 2] = start[index3 + 2];
 
         delays[i] = r4 * CONSTELLATION_ENTRY_STAGGER_MS;
+        completed[i] = 0;
+
+        if (flashIndices) {
+            const key = pointKey(x, y, z);
+            flashIndices[i] = flashLookup.has(key) ? flashLookup.get(key) : -1;
+        }
     }
 
     return {
@@ -292,8 +336,54 @@ function createConstellationEntryPayload(baseTriples, seedOffset) {
         count: delays.length,
         attribute: null,
         geometry: null,
-        segmentCount: 0
+        segmentCount: 0,
+        flashIndices,
+        completed
     };
+}
+
+function triggerConstellationJoinFlash(flashIndex, strength = 1) {
+    if (!constellationJoinFlashIntensity || flashIndex < 0 || flashIndex >= constellationJoinFlashIntensity.length) {
+        return;
+    }
+    constellationJoinFlashIntensity[flashIndex] = Math.max(constellationJoinFlashIntensity[flashIndex], strength);
+}
+
+function updateConstellationJoinFlashes(nowMs) {
+    if (!constellationJoinFlashIntensity || !constellationJoinFlashColors || !constellationJoinFlashMaterial || !constellationJoinFlashGeometry) {
+        return;
+    }
+
+    const deltaMs = Math.max(0, nowMs - constellationJoinFlashLastMs);
+    constellationJoinFlashLastMs = nowMs;
+    const decay = Math.exp(-deltaMs / CONSTELLATION_JOIN_FLASH_DURATION_MS);
+
+    let activeCount = 0;
+    for (let i = 0; i < constellationJoinFlashIntensity.length; i += 1) {
+        let intensity = constellationJoinFlashIntensity[i] * decay;
+        if (intensity < 0.003) {
+            intensity = 0;
+        } else {
+            activeCount += 1;
+        }
+
+        constellationJoinFlashIntensity[i] = intensity;
+
+        const index3 = i * 3;
+        if (intensity > 0) {
+            const whiteBoost = 0.78 + intensity * 0.22;
+            constellationJoinFlashColors[index3] = whiteBoost;
+            constellationJoinFlashColors[index3 + 1] = 0.86 + intensity * 0.14;
+            constellationJoinFlashColors[index3 + 2] = 1;
+        } else {
+            constellationJoinFlashColors[index3] = 0;
+            constellationJoinFlashColors[index3 + 1] = 0;
+            constellationJoinFlashColors[index3 + 2] = 0;
+        }
+    }
+
+    constellationJoinFlashGeometry.attributes.color.needsUpdate = true;
+    constellationJoinFlashMaterial.opacity = activeCount > 0 ? 0.95 : 0;
 }
 
 function updateConstellationEntryPayload(payload, elapsedMs) {
@@ -315,6 +405,13 @@ function updateConstellationEntryPayload(payload, elapsedMs) {
             payload.live[index3] = payload.base[index3];
             payload.live[index3 + 1] = payload.base[index3 + 1];
             payload.live[index3 + 2] = payload.base[index3 + 2];
+
+            if (!payload.completed[i]) {
+                payload.completed[i] = 1;
+                if (payload.flashIndices) {
+                    triggerConstellationJoinFlash(payload.flashIndices[i], 1);
+                }
+            }
             continue;
         }
 
@@ -1334,13 +1431,14 @@ function buildConstellation(image) {
 
     const orderedLineTriples = sortLineTriplesForEntry(lineTriples, 11);
     const orderedFarLineTriples = sortLineTriplesForEntry(lineTriplesFar, 17);
+    const joinFlashData = createConstellationJoinFlashData(orderedLineTriples, orderedFarLineTriples);
     const dustEntryPayload = createConstellationEntryPayload(dustTriples, 3);
     const nodeEntryPayload = createConstellationEntryPayload(nodeTriples, 5);
     const nearLineEntryPayload = orderedLineTriples.length > 0
-        ? createConstellationEntryPayload(orderedLineTriples, 7)
+        ? createConstellationEntryPayload(orderedLineTriples, 7, joinFlashData.lookup)
         : null;
     const farLineEntryPayload = orderedFarLineTriples.length > 0
-        ? createConstellationEntryPayload(orderedFarLineTriples, 13)
+        ? createConstellationEntryPayload(orderedFarLineTriples, 13, joinFlashData.lookup)
         : null;
 
     if (constellationGroup) {
@@ -1366,6 +1464,13 @@ function buildConstellation(image) {
         constellationLineFarMaterial.dispose();
         constellationLineFarMaterial = null;
     }
+    if (constellationJoinFlashMaterial) {
+        constellationJoinFlashMaterial.dispose();
+        constellationJoinFlashMaterial = null;
+    }
+    constellationJoinFlashGeometry = null;
+    constellationJoinFlashColors = null;
+    constellationJoinFlashIntensity = null;
 
     constellationGroup = new THREE.Group();
 
@@ -1402,6 +1507,27 @@ function buildConstellation(image) {
     nodePoints.renderOrder = 3;
     constellationGroup.add(nodePoints);
     nodeEntryPayload.attribute = nodeGeometry.attributes.position;
+
+    if (joinFlashData.positions.length > 0) {
+        constellationJoinFlashGeometry = new THREE.BufferGeometry();
+        constellationJoinFlashGeometry.setAttribute("position", new THREE.Float32BufferAttribute(joinFlashData.positions, 3));
+        constellationJoinFlashColors = new Float32Array(joinFlashData.positions.length);
+        constellationJoinFlashGeometry.setAttribute("color", new THREE.BufferAttribute(constellationJoinFlashColors, 3));
+        constellationJoinFlashIntensity = new Float32Array(Math.floor(joinFlashData.positions.length / 3));
+        constellationJoinFlashMaterial = new THREE.PointsMaterial({
+            size: CONSTELLATION_JOIN_FLASH_SIZE,
+            transparent: true,
+            opacity: 0,
+            depthWrite: false,
+            depthTest: true,
+            blending: THREE.AdditiveBlending,
+            vertexColors: true
+        });
+        const joinFlashPoints = new THREE.Points(constellationJoinFlashGeometry, constellationJoinFlashMaterial);
+        joinFlashPoints.renderOrder = 6;
+        constellationGroup.add(joinFlashPoints);
+        constellationJoinFlashLastMs = performance.now();
+    }
 
     if (nearLineEntryPayload) {
         const lineGeometry = new THREE.BufferGeometry();
@@ -1859,6 +1985,7 @@ function updateConstellation(nowMs) {
     }
 
     updateConstellationEntryMotion(nowMs);
+    updateConstellationJoinFlashes(nowMs);
 
     const fadeProgress = THREE.MathUtils.clamp(
         (nowMs - constellationReadyAtMs) / CONSTELLATION_FADE_MS,
