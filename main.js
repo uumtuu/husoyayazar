@@ -134,6 +134,7 @@ const pointerSmoothNDC = new THREE.Vector2(0, 0);
 const pointerRayPoint = new THREE.Vector3();
 const pointerRayDir = new THREE.Vector3(0, 0, -1);
 const pointerWorld = new THREE.Vector3();
+const viewportSize = { width: 0, height: 0 };
 
 let pointerInside = false;
 let isRightPointerDown = false;
@@ -145,6 +146,38 @@ let touchHoldPointerId = null;
 let touchHoldActivated = false;
 let powerAnchorClientX = null;
 let powerAnchorClientY = null;
+
+function getViewportDimensions() {
+    const viewport = window.visualViewport;
+    if (viewport) {
+        return {
+            width: Math.max(1, Math.round(viewport.width)),
+            height: Math.max(1, Math.round(viewport.height))
+        };
+    }
+    return {
+        width: Math.max(1, window.innerWidth),
+        height: Math.max(1, window.innerHeight)
+    };
+}
+
+function applyViewportSize(force = false) {
+    if (!camera || !renderer) {
+        return;
+    }
+
+    const next = getViewportDimensions();
+    if (!force && next.width === viewportSize.width && next.height === viewportSize.height) {
+        return;
+    }
+
+    viewportSize.width = next.width;
+    viewportSize.height = next.height;
+    camera.aspect = next.width / next.height;
+    camera.updateProjectionMatrix();
+    renderer.setSize(next.width, next.height);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.8));
+}
 
 function resolvePerformanceProfile() {
     const coarsePointer = typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
@@ -187,11 +220,15 @@ function init() {
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x000000);
 
-    camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 2800);
+    const initialViewport = getViewportDimensions();
+    viewportSize.width = initialViewport.width;
+    viewportSize.height = initialViewport.height;
+
+    camera = new THREE.PerspectiveCamera(72, initialViewport.width / initialViewport.height, 0.1, 2800);
     camera.position.set(0, 6, 75);
 
     renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
-    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setSize(initialViewport.width, initialViewport.height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.8));
     renderer.outputEncoding = THREE.sRGBEncoding;
     renderer.domElement.style.touchAction = "none";
@@ -212,11 +249,17 @@ function init() {
     }
 
     bindEvents();
+    applyViewportSize(true);
     animate();
 }
 
 function bindEvents() {
     window.addEventListener("resize", onWindowResize);
+    window.addEventListener("orientationchange", onWindowResize);
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener("resize", onWindowResize);
+        window.visualViewport.addEventListener("scroll", onWindowResize);
+    }
 
     renderer.domElement.addEventListener("pointerenter", () => {
         pointerInside = true;
@@ -318,16 +361,16 @@ function onPointerCancel(event) {
 }
 
 function onWindowResize() {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.8));
+    applyViewportSize();
 }
 
 function onPointerMove(event) {
     const rect = renderer.domElement.getBoundingClientRect();
-    const x = (event.clientX - rect.left) / rect.width;
-    const y = (event.clientY - rect.top) / rect.height;
+    if (rect.width <= 0 || rect.height <= 0) {
+        return;
+    }
+    const x = THREE.MathUtils.clamp((event.clientX - rect.left) / rect.width, 0, 1);
+    const y = THREE.MathUtils.clamp((event.clientY - rect.top) / rect.height, 0, 1);
     const now = performance.now();
 
     pointerTargetNDC.x = x * 2 - 1;
