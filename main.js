@@ -17,7 +17,7 @@ const foods = [
     "ıslak hamburger"
 ];
 
-const BUILD_ID = "20260217-constellation-v18-side-food-line-draw";
+const BUILD_ID = "20260217-constellation-v19-relativistic-system";
 
 const BASE_STAR_COUNT = 22000;
 const MIN_STAR_COUNT = 7000;
@@ -57,6 +57,17 @@ const POWER_RESET_THRESHOLD_TOUCH_PX = 9;
 const BLACKHOLE_LENS_SCALE_MULT = 2.65;
 const BLACKHOLE_LENS_OPACITY_BASE = 0.085;
 const BLACKHOLE_LENS_OPACITY_POWER_MULT = 0.11;
+const BLACKHOLE_DISK_SCALE_MULT = 4.45;
+const BLACKHOLE_DISK_INNER_SCALE_MULT = 3.05;
+const BLACKHOLE_DISK_FLATTEN_BASE = 0.68;
+const BLACKHOLE_DISK_FLATTEN_POWER_MULT = 0.08;
+const BLACKHOLE_DISK_OPACITY_BASE = 0.12;
+const BLACKHOLE_DISK_OPACITY_POWER_MULT = 0.17;
+const BLACKHOLE_DISK_ROTATION_SPEED = 0.00094;
+const BLACKHOLE_INNER_DISK_ROTATION_SPEED = -0.00142;
+const BLACKHOLE_PHOTON_RING_SCALE_MULT = 1.6;
+const BLACKHOLE_PHOTON_RING_OPACITY_BASE = 0.18;
+const BLACKHOLE_PHOTON_RING_OPACITY_POWER_MULT = 0.13;
 
 const STAR_INFLUENCE_MULT = 2.9;
 const STAR_MIN_INFLUENCE_RADIUS = 22;
@@ -138,6 +149,12 @@ const NEBULA_POINTER_PARALLAX_Y = 8;
 const STAR_TWINKLE_SPEED = 0.00034;
 const STAR_TWINKLE_AMPLITUDE = 0.045;
 const DEEP_STAR_TWINKLE_AMPLITUDE = 0.03;
+const STAR_NEAR_BRIGHTNESS = 1.08;
+const STAR_FAR_BRIGHTNESS = 0.58;
+const DEEP_STAR_NEAR_BRIGHTNESS = 0.9;
+const DEEP_STAR_FAR_BRIGHTNESS = 0.34;
+const STAR_GRAV_LENS_COLOR_SHIFT = 0.24;
+const STAR_DOPPLER_COLOR_SHIFT = 0.18;
 
 const SHOOTING_STAR_MIN_INTERVAL_MS = 2000;
 const SHOOTING_STAR_MAX_INTERVAL_MS = 5200;
@@ -149,6 +166,7 @@ const SHOOTING_STAR_MAX_START_Z = -760;
 const SHOOTING_STAR_SPEED_Z_MIN = 9.5;
 const SHOOTING_STAR_SPEED_Z_MAX = 14.5;
 const SHOOTING_STAR_SPEED_XY = 0.55;
+const SHOOTING_STAR_FLICKER_SPEED = 0.014;
 
 let scene;
 let camera;
@@ -162,14 +180,21 @@ let starVelX;
 let starVelY;
 let starColors;
 let starTwinklePhase;
+let starBaseColors;
+let starTwinkleAmp;
 let deepStarCount = MIN_DEEP_STAR_COUNT;
 let deepStarPositions;
 let deepStarDrift;
 let deepStarColors;
 let deepStarTwinklePhase;
+let deepStarBaseColors;
+let deepStarTwinkleAmp;
 
 let blackHoleCore;
 let blackHoleLensing;
+let blackHoleAccretionDisk;
+let blackHoleAccretionInnerDisk;
+let blackHolePhotonRing;
 let blackHoleRadius = MIN_BLACKHOLE_RADIUS;
 let blackHolePulse = 0;
 let blackHolePower = 0;
@@ -230,20 +255,49 @@ function getPlaneHalfExtentsAtZ(zValue) {
     return { halfWidth, halfHeight };
 }
 
-function setDepthColor(colorBuffer, index3, zValue, depth, nearRgb, farRgb) {
-    if (!colorBuffer) {
-        return;
-    }
-
-    const depthMix = THREE.MathUtils.clamp((zValue + depth * 0.5) / depth, 0, 1);
-    colorBuffer[index3] = farRgb[0] + (nearRgb[0] - farRgb[0]) * depthMix;
-    colorBuffer[index3 + 1] = farRgb[1] + (nearRgb[1] - farRgb[1]) * depthMix;
-    colorBuffer[index3 + 2] = farRgb[2] + (nearRgb[2] - farRgb[2]) * depthMix;
-}
-
 function seededUnit(seed) {
     const value = Math.sin(seed) * 43758.5453123;
     return value - Math.floor(value);
+}
+
+function assignStarSpectralProfile(index3, baseColorBuffer, twinkleAmpBuffer, starIndex, deepField = false) {
+    const sample = Math.random();
+    let r = 1;
+    let g = 1;
+    let b = 1;
+    let luminance = 1;
+    let twinkleMul = 1;
+
+    if (sample < 0.04) {
+        r = 0.66; g = 0.79; b = 1.0;
+        luminance = 1.22;
+        twinkleMul = 1.18;
+    } else if (sample < 0.19) {
+        r = 0.76; g = 0.86; b = 1.0;
+        luminance = 1.08;
+        twinkleMul = 1.06;
+    } else if (sample < 0.58) {
+        r = 0.95; g = 0.96; b = 1.0;
+        luminance = 0.98;
+        twinkleMul = 0.9;
+    } else if (sample < 0.84) {
+        r = 1.0; g = 0.9; b = 0.76;
+        luminance = 0.9;
+        twinkleMul = 0.86;
+    } else {
+        r = 1.0; g = 0.78; b = 0.64;
+        luminance = 0.82;
+        twinkleMul = 0.98;
+    }
+
+    const randomBrightness = 0.9 + Math.random() * 0.24;
+    const fieldLuma = deepField ? 0.82 : 1;
+    const brightness = luminance * randomBrightness * fieldLuma;
+
+    baseColorBuffer[index3] = r * brightness;
+    baseColorBuffer[index3 + 1] = g * brightness;
+    baseColorBuffer[index3 + 2] = b * brightness;
+    twinkleAmpBuffer[starIndex] = twinkleMul * (0.72 + Math.random() * 0.66);
 }
 
 function getEntrySideVector(x, y) {
@@ -917,6 +971,8 @@ function createStars() {
     starVelY = new Float32Array(starCount);
     starColors = new Float32Array(starCount * 3);
     starTwinklePhase = new Float32Array(starCount);
+    starBaseColors = new Float32Array(starCount * 3);
+    starTwinkleAmp = new Float32Array(starCount);
 
     for (let i = 0; i < starCount; i += 1) {
         const index3 = i * 3;
@@ -953,14 +1009,16 @@ function resetStar(index3, moveToBack, starIndex = Math.floor(index3 / 3)) {
     } else {
         starPositions[index3 + 2] = (Math.random() - 0.5) * STAR_FIELD_DEPTH;
     }
-    setDepthColor(
-        starColors,
-        index3,
-        starPositions[index3 + 2],
-        STAR_FIELD_DEPTH,
-        [0.97, 0.99, 1],
-        [0.56, 0.71, 0.95]
-    );
+
+    if (starBaseColors && starTwinkleAmp) {
+        assignStarSpectralProfile(index3, starBaseColors, starTwinkleAmp, starIndex, false);
+    }
+
+    const depthMix = THREE.MathUtils.clamp((starPositions[index3 + 2] + STAR_FIELD_DEPTH * 0.5) / STAR_FIELD_DEPTH, 0, 1);
+    const depthBrightness = STAR_FAR_BRIGHTNESS + (STAR_NEAR_BRIGHTNESS - STAR_FAR_BRIGHTNESS) * depthMix;
+    starColors[index3] = THREE.MathUtils.clamp(starBaseColors[index3] * depthBrightness, 0, 1);
+    starColors[index3 + 1] = THREE.MathUtils.clamp(starBaseColors[index3 + 1] * depthBrightness, 0, 1);
+    starColors[index3 + 2] = THREE.MathUtils.clamp(starBaseColors[index3 + 2] * depthBrightness, 0, 1);
 
     if (starVelX && starVelY) {
         starVelX[starIndex] = 0;
@@ -976,6 +1034,8 @@ function createDeepStars() {
     deepStarDrift = new Float32Array(deepStarCount);
     deepStarColors = new Float32Array(deepStarCount * 3);
     deepStarTwinklePhase = new Float32Array(deepStarCount);
+    deepStarBaseColors = new Float32Array(deepStarCount * 3);
+    deepStarTwinkleAmp = new Float32Array(deepStarCount);
 
     for (let i = 0; i < deepStarCount; i += 1) {
         const index3 = i * 3;
@@ -1011,14 +1071,16 @@ function resetDeepStar(index3, moveToBack, starIndex = Math.floor(index3 / 3)) {
     } else {
         deepStarPositions[index3 + 2] = (Math.random() - 0.5) * DEEP_STAR_FIELD_DEPTH;
     }
-    setDepthColor(
-        deepStarColors,
-        index3,
-        deepStarPositions[index3 + 2],
-        DEEP_STAR_FIELD_DEPTH,
-        [0.84, 0.91, 0.99],
-        [0.31, 0.46, 0.7]
-    );
+
+    if (deepStarBaseColors && deepStarTwinkleAmp) {
+        assignStarSpectralProfile(index3, deepStarBaseColors, deepStarTwinkleAmp, starIndex, true);
+    }
+
+    const depthMix = THREE.MathUtils.clamp((deepStarPositions[index3 + 2] + DEEP_STAR_FIELD_DEPTH * 0.5) / DEEP_STAR_FIELD_DEPTH, 0, 1);
+    const depthBrightness = DEEP_STAR_FAR_BRIGHTNESS + (DEEP_STAR_NEAR_BRIGHTNESS - DEEP_STAR_FAR_BRIGHTNESS) * depthMix;
+    deepStarColors[index3] = THREE.MathUtils.clamp(deepStarBaseColors[index3] * depthBrightness, 0, 1);
+    deepStarColors[index3 + 1] = THREE.MathUtils.clamp(deepStarBaseColors[index3 + 1] * depthBrightness, 0, 1);
+    deepStarColors[index3 + 2] = THREE.MathUtils.clamp(deepStarBaseColors[index3 + 2] * depthBrightness, 0, 1);
     if (deepStarTwinklePhase) {
         deepStarTwinklePhase[starIndex] = Math.random() * Math.PI * 2;
     }
@@ -1188,9 +1250,97 @@ function createBlackHoleLensingTexture() {
     return texture;
 }
 
+function createAccretionDiskTexture(seedOffset = 0, hotness = 0.5) {
+    const size = 512;
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const context = canvas.getContext("2d");
+    const center = size * 0.5;
+    const pi2 = Math.PI * 2;
+
+    let seed = (0x6f19a73 ^ ((seedOffset + 1) * 0x9e3779b9)) >>> 0;
+    const seededRandom = () => {
+        seed = (seed * 1664525 + 1013904223) >>> 0;
+        return seed / 4294967295;
+    };
+
+    context.clearRect(0, 0, size, size);
+
+    const body = context.createRadialGradient(center, center, size * 0.16, center, center, size * 0.5);
+    body.addColorStop(0, "rgba(0,0,0,0)");
+    body.addColorStop(0.3, `rgba(${Math.floor(210 + hotness * 45)}, ${Math.floor(120 + hotness * 62)}, ${Math.floor(34 + hotness * 24)}, 0.34)`);
+    body.addColorStop(0.54, `rgba(${Math.floor(255 - hotness * 25)}, ${Math.floor(170 + hotness * 28)}, ${Math.floor(90 + hotness * 16)}, 0.5)`);
+    body.addColorStop(0.72, "rgba(120,165,255,0.22)");
+    body.addColorStop(1, "rgba(0,0,0,0)");
+    context.fillStyle = body;
+    context.fillRect(0, 0, size, size);
+
+    context.globalCompositeOperation = "lighter";
+    const streakCount = 220;
+    for (let i = 0; i < streakCount; i += 1) {
+        const orbit = size * (0.2 + seededRandom() * 0.28);
+        const start = seededRandom() * pi2;
+        const arc = 0.05 + seededRandom() * 0.26;
+        const lineWidth = 0.6 + seededRandom() * 2.8;
+        const alpha = 0.045 + seededRandom() * 0.26;
+        const hue = 24 + hotness * 24 + seededRandom() * 34;
+        const saturation = 72 + seededRandom() * 22;
+        const lightness = 52 + hotness * 20 + seededRandom() * 24;
+        context.strokeStyle = `hsla(${hue}, ${saturation}%, ${lightness}%, ${alpha})`;
+        context.lineWidth = lineWidth;
+        context.beginPath();
+        context.arc(center, center, orbit, start, start + arc);
+        context.stroke();
+    }
+
+    context.globalCompositeOperation = "destination-out";
+    const hole = context.createRadialGradient(center, center, 0, center, center, size * 0.26);
+    hole.addColorStop(0, "rgba(0,0,0,0.98)");
+    hole.addColorStop(0.42, "rgba(0,0,0,0.88)");
+    hole.addColorStop(0.78, "rgba(0,0,0,0.25)");
+    hole.addColorStop(1, "rgba(0,0,0,0)");
+    context.fillStyle = hole;
+    context.fillRect(0, 0, size, size);
+
+    context.globalCompositeOperation = "source-over";
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    return texture;
+}
+
+function createPhotonRingTexture() {
+    const size = 256;
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const context = canvas.getContext("2d");
+    const center = size * 0.5;
+
+    context.clearRect(0, 0, size, size);
+    const ring = context.createRadialGradient(center, center, size * 0.2, center, center, size * 0.5);
+    ring.addColorStop(0, "rgba(0,0,0,0)");
+    ring.addColorStop(0.48, "rgba(0,0,0,0)");
+    ring.addColorStop(0.62, "rgba(255,220,168,0.74)");
+    ring.addColorStop(0.7, "rgba(140,188,255,0.34)");
+    ring.addColorStop(0.83, "rgba(0,0,0,0)");
+    ring.addColorStop(1, "rgba(0,0,0,0)");
+    context.fillStyle = ring;
+    context.fillRect(0, 0, size, size);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    return texture;
+}
+
 function createBlackHoleVisual() {
     const holeTexture = createBlackHoleTexture();
     const lensTexture = createBlackHoleLensingTexture();
+    const diskTexture = createAccretionDiskTexture(1, 0.58);
+    const innerDiskTexture = createAccretionDiskTexture(7, 0.96);
+    const photonRingTexture = createPhotonRingTexture();
     blackHoleCore = new THREE.Mesh(
         new THREE.PlaneGeometry(2, 2),
         new THREE.MeshBasicMaterial({
@@ -1217,23 +1367,93 @@ function createBlackHoleVisual() {
     blackHoleLensing.position.set(0, 0, 3);
     blackHoleLensing.visible = false;
     scene.add(blackHoleLensing);
+
+    blackHoleAccretionDisk = new THREE.Mesh(
+        new THREE.PlaneGeometry(2, 2),
+        new THREE.MeshBasicMaterial({
+            map: diskTexture,
+            color: 0xffe0ae,
+            transparent: true,
+            opacity: 0,
+            depthWrite: false,
+            depthTest: false,
+            blending: THREE.AdditiveBlending
+        })
+    );
+    blackHoleAccretionDisk.renderOrder = 96;
+    blackHoleAccretionDisk.position.set(0, 0, 3);
+    blackHoleAccretionDisk.visible = false;
+    scene.add(blackHoleAccretionDisk);
+
+    blackHoleAccretionInnerDisk = new THREE.Mesh(
+        new THREE.PlaneGeometry(2, 2),
+        new THREE.MeshBasicMaterial({
+            map: innerDiskTexture,
+            color: 0xfff3d2,
+            transparent: true,
+            opacity: 0,
+            depthWrite: false,
+            depthTest: false,
+            blending: THREE.AdditiveBlending
+        })
+    );
+    blackHoleAccretionInnerDisk.renderOrder = 97;
+    blackHoleAccretionInnerDisk.position.set(0, 0, 3);
+    blackHoleAccretionInnerDisk.visible = false;
+    scene.add(blackHoleAccretionInnerDisk);
+
+    blackHolePhotonRing = new THREE.Mesh(
+        new THREE.PlaneGeometry(2, 2),
+        new THREE.MeshBasicMaterial({
+            map: photonRingTexture,
+            transparent: true,
+            opacity: 0,
+            depthWrite: false,
+            depthTest: false,
+            blending: THREE.AdditiveBlending
+        })
+    );
+    blackHolePhotonRing.renderOrder = 101;
+    blackHolePhotonRing.position.set(0, 0, 3);
+    blackHolePhotonRing.visible = false;
+    scene.add(blackHolePhotonRing);
 }
 
 function createShootingStarTexture() {
-    const width = 320;
-    const height = 18;
+    const width = 384;
+    const height = 28;
     const canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
     const context = canvas.getContext("2d");
-    const gradient = context.createLinearGradient(0, 0, width, 0);
-    gradient.addColorStop(0, "rgba(255,255,255,0)");
-    gradient.addColorStop(0.45, "rgba(210,235,255,0.78)");
-    gradient.addColorStop(0.7, "rgba(255,255,255,0.94)");
-    gradient.addColorStop(1, "rgba(255,255,255,0)");
+    context.clearRect(0, 0, width, height);
 
-    context.fillStyle = gradient;
+    const tail = context.createLinearGradient(0, 0, width, 0);
+    tail.addColorStop(0, "rgba(0,0,0,0)");
+    tail.addColorStop(0.28, "rgba(120,170,255,0.22)");
+    tail.addColorStop(0.62, "rgba(210,236,255,0.82)");
+    tail.addColorStop(0.84, "rgba(255,255,255,0.98)");
+    tail.addColorStop(1, "rgba(255,255,255,0)");
+    context.fillStyle = tail;
     context.fillRect(0, 0, width, height);
+
+    const head = context.createRadialGradient(width * 0.82, height * 0.5, 0, width * 0.82, height * 0.5, height * 1.35);
+    head.addColorStop(0, "rgba(255,255,255,1)");
+    head.addColorStop(0.24, "rgba(224,240,255,0.95)");
+    head.addColorStop(0.58, "rgba(150,200,255,0.32)");
+    head.addColorStop(1, "rgba(0,0,0,0)");
+    context.fillStyle = head;
+    context.fillRect(0, 0, width, height);
+
+    context.globalCompositeOperation = "destination-in";
+    const verticalMask = context.createLinearGradient(0, 0, 0, height);
+    verticalMask.addColorStop(0, "rgba(0,0,0,0)");
+    verticalMask.addColorStop(0.2, "rgba(255,255,255,0.96)");
+    verticalMask.addColorStop(0.8, "rgba(255,255,255,0.96)");
+    verticalMask.addColorStop(1, "rgba(0,0,0,0)");
+    context.fillStyle = verticalMask;
+    context.fillRect(0, 0, width, height);
+    context.globalCompositeOperation = "source-over";
 
     const texture = new THREE.CanvasTexture(canvas);
     texture.minFilter = THREE.LinearFilter;
@@ -1253,8 +1473,10 @@ function createShootingStar(nowMs) {
 
     const length = THREE.MathUtils.randFloat(46, 86);
     const thickness = THREE.MathUtils.randFloat(0.75, 1.65);
+    const hue = THREE.MathUtils.randFloat(0.54, 0.63);
     const material = new THREE.MeshBasicMaterial({
         map: shootingStarTexture,
+        color: new THREE.Color().setHSL(hue, 0.38, 0.82),
         transparent: true,
         opacity: 0,
         depthWrite: false,
@@ -1281,7 +1503,10 @@ function createShootingStar(nowMs) {
         vz: dirZ,
         bornMs: nowMs,
         lifeMs: THREE.MathUtils.randFloat(SHOOTING_STAR_MIN_LIFE_MS, SHOOTING_STAR_MAX_LIFE_MS),
-        peakOpacity: THREE.MathUtils.randFloat(0.42, 0.68)
+        peakOpacity: THREE.MathUtils.randFloat(0.42, 0.68),
+        flickerPhase: Math.random() * Math.PI * 2,
+        tailStretch: THREE.MathUtils.randFloat(1.05, 2.05),
+        hue
     };
 
     scene.add(mesh);
@@ -1328,7 +1553,15 @@ function updateShootingStars(delta, nowMs) {
 
         const fadeIn = THREE.MathUtils.clamp(lifeProgress / 0.18, 0, 1);
         const fadeOut = THREE.MathUtils.clamp((1 - lifeProgress) / 0.4, 0, 1);
-        star.material.opacity = state.peakOpacity * Math.min(fadeIn, fadeOut);
+        const flicker = 0.92 + Math.sin(nowMs * SHOOTING_STAR_FLICKER_SPEED + state.flickerPhase) * 0.08;
+        const envelope = Math.min(fadeIn, fadeOut);
+        star.material.opacity = state.peakOpacity * envelope * flicker;
+        star.material.color.setHSL(state.hue, 0.4, 0.76 + envelope * 0.2);
+        star.scale.set(
+            0.84 + envelope * state.tailStretch,
+            0.76 + fadeOut * 0.34,
+            1
+        );
 
         if (star.position.z > 700 || star.position.y < -460 || Math.abs(star.position.x) > STAR_FIELD_WIDTH * 0.95) {
             removeShootingStar(i);
@@ -2037,13 +2270,13 @@ function updateBlackHole(delta, nowMs) {
     pointerAtZ(3, pointerWorld);
 
     const visualRadius = Math.max(0.001, blackHoleRadius);
+    const timePulse = 0.92 + Math.sin(nowMs * 0.0053 + blackHolePower * 0.8) * 0.08;
     blackHoleCore.visible = visualRadius > 0.04;
 
     blackHoleCore.position.copy(pointerWorld);
-
     blackHoleCore.quaternion.copy(camera.quaternion);
-
-    blackHoleCore.scale.set(visualRadius, visualRadius, 1);
+    blackHoleCore.scale.set(visualRadius * timePulse, visualRadius * timePulse, 1);
+    blackHoleCore.material.opacity = THREE.MathUtils.clamp(0.9 + blackHolePower * 0.05, 0, 1);
 
     if (blackHoleLensing) {
         blackHoleLensing.visible = visualRadius > 0.06;
@@ -2053,9 +2286,83 @@ function updateBlackHole(delta, nowMs) {
         const lensRadius = visualRadius * BLACKHOLE_LENS_SCALE_MULT * (1 + blackHolePower * 0.12);
         blackHoleLensing.scale.set(lensRadius, lensRadius, 1);
         blackHoleLensing.material.opacity = THREE.MathUtils.clamp(
-            BLACKHOLE_LENS_OPACITY_BASE + blackHolePower * BLACKHOLE_LENS_OPACITY_POWER_MULT,
+            (BLACKHOLE_LENS_OPACITY_BASE + blackHolePower * BLACKHOLE_LENS_OPACITY_POWER_MULT) *
+            (0.88 + Math.sin(nowMs * 0.0061) * 0.12),
             0,
-            0.34
+            0.4
+        );
+    }
+
+    const diskVisible = visualRadius > 0.08;
+    const flatten = THREE.MathUtils.clamp(
+        BLACKHOLE_DISK_FLATTEN_BASE +
+        Math.sin(nowMs * 0.0018 + blackHolePower * 0.6) * 0.045 +
+        blackHolePower * BLACKHOLE_DISK_FLATTEN_POWER_MULT,
+        0.52,
+        0.92
+    );
+
+    if (blackHoleAccretionDisk) {
+        blackHoleAccretionDisk.visible = diskVisible;
+        blackHoleAccretionDisk.position.copy(pointerWorld);
+        blackHoleAccretionDisk.rotation.set(
+            camera.rotation.x,
+            camera.rotation.y,
+            camera.rotation.z + nowMs * BLACKHOLE_DISK_ROTATION_SPEED
+        );
+
+        const diskScale = visualRadius * BLACKHOLE_DISK_SCALE_MULT * (1 + blackHolePower * 0.2);
+        blackHoleAccretionDisk.scale.set(diskScale, diskScale * flatten, 1);
+
+        const beaming = 0.5 + 0.5 * Math.sin(nowMs * 0.0029 + blackHolePower * 0.72);
+        blackHoleAccretionDisk.material.opacity = THREE.MathUtils.clamp(
+            (BLACKHOLE_DISK_OPACITY_BASE + blackHolePower * BLACKHOLE_DISK_OPACITY_POWER_MULT) *
+            (0.78 + beaming * 0.4),
+            0,
+            0.8
+        );
+        blackHoleAccretionDisk.material.color.setRGB(
+            1,
+            0.72 + beaming * 0.18,
+            0.46 + (1 - beaming) * 0.18
+        );
+    }
+
+    if (blackHoleAccretionInnerDisk) {
+        blackHoleAccretionInnerDisk.visible = diskVisible;
+        blackHoleAccretionInnerDisk.position.copy(pointerWorld);
+        blackHoleAccretionInnerDisk.rotation.set(
+            camera.rotation.x,
+            camera.rotation.y,
+            camera.rotation.z + nowMs * BLACKHOLE_INNER_DISK_ROTATION_SPEED
+        );
+
+        const innerScale = visualRadius * BLACKHOLE_DISK_INNER_SCALE_MULT * (1 + blackHolePower * 0.18);
+        blackHoleAccretionInnerDisk.scale.set(innerScale, innerScale * (flatten * 0.9), 1);
+        blackHoleAccretionInnerDisk.material.opacity = THREE.MathUtils.clamp(
+            (BLACKHOLE_DISK_OPACITY_BASE * 0.9 + blackHolePower * BLACKHOLE_DISK_OPACITY_POWER_MULT * 0.78) *
+            (0.82 + Math.sin(nowMs * 0.0064 + 1.6) * 0.18),
+            0,
+            0.74
+        );
+        blackHoleAccretionInnerDisk.material.color.setRGB(1, 0.9, 0.74 + Math.sin(nowMs * 0.0042) * 0.05);
+    }
+
+    if (blackHolePhotonRing) {
+        blackHolePhotonRing.visible = diskVisible;
+        blackHolePhotonRing.position.copy(pointerWorld);
+        blackHolePhotonRing.rotation.set(
+            camera.rotation.x,
+            camera.rotation.y,
+            camera.rotation.z + Math.sin(nowMs * 0.0019) * 0.04
+        );
+
+        const ringScale = visualRadius * BLACKHOLE_PHOTON_RING_SCALE_MULT * (1 + blackHolePower * 0.12);
+        blackHolePhotonRing.scale.set(ringScale, ringScale * (0.9 + Math.sin(nowMs * 0.0022) * 0.04), 1);
+        blackHolePhotonRing.material.opacity = THREE.MathUtils.clamp(
+            (BLACKHOLE_PHOTON_RING_OPACITY_BASE + blackHolePower * BLACKHOLE_PHOTON_RING_OPACITY_POWER_MULT) * timePulse,
+            0,
+            0.72
         );
     }
 }
@@ -2074,10 +2381,13 @@ function updateDeepStars(delta, nowMs) {
         }
 
         const depthMix = THREE.MathUtils.clamp((deepStarPositions[index3 + 2] + DEEP_STAR_FIELD_DEPTH * 0.5) / DEEP_STAR_FIELD_DEPTH, 0, 1);
-        const twinkle = 1 + Math.sin(nowMs * STAR_TWINKLE_SPEED * 0.86 + deepStarTwinklePhase[i]) * DEEP_STAR_TWINKLE_AMPLITUDE;
-        deepStarColors[index3] = THREE.MathUtils.clamp((0.31 + (0.84 - 0.31) * depthMix) * twinkle, 0, 1);
-        deepStarColors[index3 + 1] = THREE.MathUtils.clamp((0.46 + (0.91 - 0.46) * depthMix) * twinkle, 0, 1);
-        deepStarColors[index3 + 2] = THREE.MathUtils.clamp((0.7 + (0.99 - 0.7) * depthMix) * twinkle, 0, 1);
+        const twinkleAmp = DEEP_STAR_TWINKLE_AMPLITUDE * (deepStarTwinkleAmp ? deepStarTwinkleAmp[i] : 1);
+        const twinkle = 1 + Math.sin(nowMs * STAR_TWINKLE_SPEED * 0.86 + deepStarTwinklePhase[i]) * twinkleAmp;
+        const depthBrightness = DEEP_STAR_FAR_BRIGHTNESS + (DEEP_STAR_NEAR_BRIGHTNESS - DEEP_STAR_FAR_BRIGHTNESS) * depthMix;
+        const brightness = depthBrightness * twinkle;
+        deepStarColors[index3] = THREE.MathUtils.clamp(deepStarBaseColors[index3] * brightness, 0, 1);
+        deepStarColors[index3 + 1] = THREE.MathUtils.clamp(deepStarBaseColors[index3 + 1] * brightness, 0, 1);
+        deepStarColors[index3 + 2] = THREE.MathUtils.clamp(deepStarBaseColors[index3 + 2] * brightness, 0, 1);
     }
 
     deepStars.geometry.attributes.position.needsUpdate = true;
@@ -2134,6 +2444,9 @@ function updateStars(delta, nowMs) {
         let z = positions[index3 + 2];
         let vx = starVelX[i];
         let vy = starVelY[i];
+        let lensingStrength = 0;
+        let tangentX = 0;
+        let tangentY = 0;
 
         z += STAR_SPEED_Z * starDrift[i] * delta;
 
@@ -2173,21 +2486,22 @@ function updateStars(delta, nowMs) {
                 const inverseDistSq = 1 / (distSq + 14);
                 const radialForce = gravityStrength * inverseDistSq * (0.38 + falloff * falloff * 2.6);
                 const horizonBoost = 1 + Math.pow(horizonRadius / Math.max(dist, horizonRadius), 2.25) * 2.3;
+                lensingStrength = THREE.MathUtils.clamp(1 - dist / influenceRadius, 0, 1);
+                tangentX = -ny;
+                tangentY = nx;
 
                 if (isRightPointerDown) {
                     const pushForce = radialForce * STAR_PUSH_FORCE;
                     vx += nx * pushForce * delta;
                     vy += ny * pushForce * delta;
                 } else {
-                    const tx = -ny;
-                    const ty = nx;
                     const orbitBias = THREE.MathUtils.clamp(1 - dist / influenceRadius, 0, 1);
                     const pullForce = radialForce * pullForceBase * (1 + orbitBias * 0.55) * horizonBoost;
                     const swirlDampNearCore = THREE.MathUtils.clamp((dist - captureRadius) / (influenceRadius - captureRadius + 0.0001), 0, 1);
                     const swirlForce = radialForce * swirlForceBase * (0.35 + orbitBias * 0.95) * swirlDampNearCore;
 
-                    vx += (-nx * pullForce + tx * swirlForce) * delta;
-                    vy += (-ny * pullForce + ty * swirlForce) * delta;
+                    vx += (-nx * pullForce + tangentX * swirlForce) * delta;
+                    vy += (-ny * pullForce + tangentY * swirlForce) * delta;
                 }
             }
         }
@@ -2204,10 +2518,36 @@ function updateStars(delta, nowMs) {
         positions[index3 + 2] = z;
 
         const depthMix = THREE.MathUtils.clamp((z + STAR_FIELD_DEPTH * 0.5) / STAR_FIELD_DEPTH, 0, 1);
-        const twinkle = 1 + Math.sin(nowMs * STAR_TWINKLE_SPEED + starTwinklePhase[i]) * STAR_TWINKLE_AMPLITUDE;
-        starColors[index3] = THREE.MathUtils.clamp((0.56 + (0.97 - 0.56) * depthMix) * twinkle, 0, 1);
-        starColors[index3 + 1] = THREE.MathUtils.clamp((0.71 + (0.99 - 0.71) * depthMix) * twinkle, 0, 1);
-        starColors[index3 + 2] = THREE.MathUtils.clamp((0.95 + (1 - 0.95) * depthMix) * twinkle, 0, 1);
+        const depthBrightness = STAR_FAR_BRIGHTNESS + (STAR_NEAR_BRIGHTNESS - STAR_FAR_BRIGHTNESS) * depthMix;
+        const twinkleAmp = STAR_TWINKLE_AMPLITUDE * (starTwinkleAmp ? starTwinkleAmp[i] : 1);
+        const twinkle = 1 + Math.sin(nowMs * STAR_TWINKLE_SPEED + starTwinklePhase[i]) * twinkleAmp;
+        const brightness = depthBrightness * twinkle;
+        const lensingColor = lensingStrength * lensingStrength;
+        const tangentialVelocity = vx * tangentX + vy * tangentY;
+        const dopplerShift = lensingStrength > 0
+            ? THREE.MathUtils.clamp(tangentialVelocity * 0.04, -1, 1) * lensingStrength
+            : 0;
+
+        starColors[index3] = THREE.MathUtils.clamp(
+            starBaseColors[index3] * brightness +
+            lensingColor * STAR_GRAV_LENS_COLOR_SHIFT -
+            dopplerShift * STAR_DOPPLER_COLOR_SHIFT * 0.8,
+            0,
+            1
+        );
+        starColors[index3 + 1] = THREE.MathUtils.clamp(
+            starBaseColors[index3 + 1] * brightness +
+            lensingColor * STAR_GRAV_LENS_COLOR_SHIFT * 0.32,
+            0,
+            1
+        );
+        starColors[index3 + 2] = THREE.MathUtils.clamp(
+            starBaseColors[index3 + 2] * brightness -
+            lensingColor * STAR_GRAV_LENS_COLOR_SHIFT * 0.62 +
+            dopplerShift * STAR_DOPPLER_COLOR_SHIFT,
+            0,
+            1
+        );
     }
 
     stars.geometry.attributes.position.needsUpdate = true;
