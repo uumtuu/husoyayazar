@@ -118,6 +118,12 @@ const CONSTELLATION_LINE_SETTLE_MIN = 0.74;
 const CONSTELLATION_STROKE_GLOW_OPACITY = 0.92;
 const CONSTELLATION_STROKE_GLOW_MIN_OPACITY = 0.32;
 const CONSTELLATION_STROKE_GLOW_FAR_MULT = 0.72;
+const CONSTELLATION_SPARKLE_MIN_INTERVAL_MS = 4200;
+const CONSTELLATION_SPARKLE_MAX_INTERVAL_MS = 9800;
+const CONSTELLATION_SPARKLE_RISE_MS = 170;
+const CONSTELLATION_SPARKLE_DECAY_MS = 840;
+const CONSTELLATION_SPARKLE_BOOST = 0.82;
+const CONSTELLATION_SPARKLE_BURST_POINTS = 8;
 const FOOD_TRAVEL_Z_MIN = -70;
 const FOOD_TRAVEL_Z_MAX = 34;
 const FOOD_EDGE_PADDING = 18;
@@ -180,6 +186,9 @@ let constellationJoinFlashGeometry;
 let constellationJoinFlashColors;
 let constellationJoinFlashIntensity;
 let constellationJoinFlashLastMs = performance.now();
+let constellationSparkleStartedAtMs = 0;
+let constellationSparkleEndAtMs = 0;
+let constellationNextSparkleAtMs = performance.now() + 5200;
 let constellationEntryState = null;
 let constellationReadyAtMs = 0;
 const constellationBasePosition = new THREE.Vector3();
@@ -413,6 +422,53 @@ function triggerConstellationJoinFlash(flashIndex, strength = 1) {
         return;
     }
     constellationJoinFlashIntensity[flashIndex] = Math.max(constellationJoinFlashIntensity[flashIndex], strength);
+}
+
+function scheduleNextConstellationSparkle(nowMs) {
+    const delayMs = THREE.MathUtils.randFloat(
+        CONSTELLATION_SPARKLE_MIN_INTERVAL_MS,
+        CONSTELLATION_SPARKLE_MAX_INTERVAL_MS
+    );
+    constellationNextSparkleAtMs = nowMs + delayMs;
+}
+
+function maybeTriggerConstellationSparkle(nowMs) {
+    if (nowMs < constellationNextSparkleAtMs) {
+        return;
+    }
+
+    constellationSparkleStartedAtMs = nowMs;
+    constellationSparkleEndAtMs = nowMs + CONSTELLATION_SPARKLE_RISE_MS + CONSTELLATION_SPARKLE_DECAY_MS;
+    scheduleNextConstellationSparkle(nowMs);
+
+    if (constellationJoinFlashIntensity && constellationJoinFlashIntensity.length > 0) {
+        const burstCount = Math.min(CONSTELLATION_SPARKLE_BURST_POINTS, constellationJoinFlashIntensity.length);
+        for (let i = 0; i < burstCount; i += 1) {
+            const flashIndex = Math.floor(Math.random() * constellationJoinFlashIntensity.length);
+            triggerConstellationJoinFlash(flashIndex, 0.72 + Math.random() * 0.42);
+        }
+    }
+}
+
+function getConstellationSparkleBoost(nowMs) {
+    if (nowMs < constellationSparkleStartedAtMs || nowMs >= constellationSparkleEndAtMs) {
+        return 1;
+    }
+
+    const elapsedMs = nowMs - constellationSparkleStartedAtMs;
+    let pulse = 0;
+    if (elapsedMs <= CONSTELLATION_SPARKLE_RISE_MS) {
+        const riseT = THREE.MathUtils.clamp(elapsedMs / CONSTELLATION_SPARKLE_RISE_MS, 0, 1);
+        pulse = riseT * riseT * (3 - 2 * riseT);
+    } else {
+        const decayT = THREE.MathUtils.clamp(
+            1 - ((elapsedMs - CONSTELLATION_SPARKLE_RISE_MS) / CONSTELLATION_SPARKLE_DECAY_MS),
+            0,
+            1
+        );
+        pulse = decayT * decayT;
+    }
+    return 1 + pulse * CONSTELLATION_SPARKLE_BOOST;
 }
 
 function updateConstellationJoinFlashes(nowMs) {
@@ -1773,6 +1829,9 @@ function buildConstellation(image) {
     constellationGroup.rotation.x = -0.02;
     constellationGroup.rotation.z = -0.006;
     constellationReadyAtMs = performance.now();
+    constellationSparkleStartedAtMs = 0;
+    constellationSparkleEndAtMs = 0;
+    scheduleNextConstellationSparkle(constellationReadyAtMs + CONSTELLATION_ENTRY_FLASH_MS);
     constellationEntryState = {
         active: true,
         dust: dustEntryPayload,
@@ -2191,6 +2250,7 @@ function updateConstellation(nowMs) {
 
     updateConstellationEntryMotion(nowMs);
     updateConstellationJoinFlashes(nowMs);
+    maybeTriggerConstellationSparkle(nowMs);
 
     const fadeProgress = THREE.MathUtils.clamp(
         (nowMs - constellationReadyAtMs) / CONSTELLATION_FADE_MS,
@@ -2203,8 +2263,9 @@ function updateConstellation(nowMs) {
         1
     );
     const entryFlash = 1 + Math.pow(1 - flashProgress, 2) * CONSTELLATION_ENTRY_FLASH_BOOST;
+    const sparkleBoost = getConstellationSparkleBoost(nowMs);
     const powerBoost = 1 + blackHolePower * CONSTELLATION_VISIBILITY_POWER_MULT;
-    const visibilityBoost = CONSTELLATION_VISIBILITY_MULT * powerBoost * entryFlash;
+    const visibilityBoost = CONSTELLATION_VISIBILITY_MULT * powerBoost * entryFlash * sparkleBoost;
     const pulse =
         0.92 +
         Math.sin(nowMs * 0.0017) * 0.06 +
