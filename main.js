@@ -109,12 +109,15 @@ const CONSTELLATION_ENTRY_SIDE_VARIANCE = 180;
 const CONSTELLATION_ENTRY_PERP_JITTER = 26;
 const CONSTELLATION_ENTRY_DEPTH_JITTER = 15;
 const CONSTELLATION_ENTRY_LINE_REVEAL_DELAY_MS = 180;
-const CONSTELLATION_ENTRY_LINE_REVEAL_MS = 3200;
-const CONSTELLATION_JOIN_FLASH_DURATION_MS = 260;
+const CONSTELLATION_ENTRY_LINE_REVEAL_MS = 5600;
+const CONSTELLATION_JOIN_FLASH_DURATION_MS = 420;
 const CONSTELLATION_JOIN_FLASH_SIZE = 3.6;
 const CONSTELLATION_LINE_DRAW_BRIGHTEN = 1.46;
-const CONSTELLATION_LINE_SETTLE_MS = 1800;
+const CONSTELLATION_LINE_SETTLE_MS = 2400;
 const CONSTELLATION_LINE_SETTLE_MIN = 0.74;
+const CONSTELLATION_STROKE_GLOW_OPACITY = 0.92;
+const CONSTELLATION_STROKE_GLOW_MIN_OPACITY = 0.32;
+const CONSTELLATION_STROKE_GLOW_FAR_MULT = 0.72;
 const FOOD_TRAVEL_Z_MIN = -70;
 const FOOD_TRAVEL_Z_MAX = 34;
 const FOOD_EDGE_PADDING = 18;
@@ -170,6 +173,8 @@ let constellationDustMaterial;
 let constellationNodeMaterial;
 let constellationLineMaterial;
 let constellationLineFarMaterial;
+let constellationLineStrokeMaterial;
+let constellationLineFarStrokeMaterial;
 let constellationJoinFlashMaterial;
 let constellationJoinFlashGeometry;
 let constellationJoinFlashColors;
@@ -378,6 +383,9 @@ function createConstellationEntryPayload(baseTriples, seedOffset, flashLookup = 
         segmentCount: 0,
         revealedSegments: 0,
         segmentFlashPairs: null,
+        strokeLine: null,
+        strokeAttribute: null,
+        strokeDrawOpacity: 0,
         entryFlashEnabled,
         sideEntryEnabled,
         flashIndices,
@@ -497,11 +505,19 @@ function updateConstellationLineDrawRange(payload, elapsedMs) {
     const segmentProgress = payload.segmentCount * revealProgress;
     const fullSegments = Math.floor(segmentProgress);
     const partial = segmentProgress - fullSegments;
+    const previousRevealed = payload.revealedSegments;
 
     payload.revealedSegments = Math.max(payload.revealedSegments, fullSegments);
+    if (payload.revealedSegments > previousRevealed && payload.segmentFlashPairs) {
+        for (let segmentIdx = previousRevealed; segmentIdx < payload.revealedSegments; segmentIdx += 1) {
+            const index2 = segmentIdx * 2;
+            triggerConstellationJoinFlash(payload.segmentFlashPairs[index2], 1);
+            triggerConstellationJoinFlash(payload.segmentFlashPairs[index2 + 1], 0.86);
+        }
+    }
 
     let drawVertices = payload.revealedSegments * 2;
-    if (payload.revealedSegments < payload.segmentCount) {
+    if (payload.revealedSegments < payload.segmentCount && partial > 0.00001) {
         const segmentIndex = payload.revealedSegments;
         const index6 = segmentIndex * 6;
         const ax = payload.base[index6];
@@ -518,6 +534,35 @@ function updateConstellationLineDrawRange(payload, elapsedMs) {
         payload.live[index6 + 4] = THREE.MathUtils.lerp(ay, by, partial);
         payload.live[index6 + 5] = THREE.MathUtils.lerp(az, bz, partial);
         drawVertices += 2;
+    }
+
+    if (payload.strokeLine && payload.strokeAttribute) {
+        if (fullSegments < payload.segmentCount) {
+            const segmentIndex = Math.min(payload.segmentCount - 1, fullSegments);
+            const index6 = segmentIndex * 6;
+            const ax = payload.base[index6];
+            const ay = payload.base[index6 + 1];
+            const az = payload.base[index6 + 2];
+            const bx = payload.base[index6 + 3];
+            const by = payload.base[index6 + 4];
+            const bz = payload.base[index6 + 5];
+            const drawPartial = revealProgress >= 1 ? 1 : partial;
+
+            payload.strokeAttribute.array[0] = ax;
+            payload.strokeAttribute.array[1] = ay;
+            payload.strokeAttribute.array[2] = az;
+            payload.strokeAttribute.array[3] = THREE.MathUtils.lerp(ax, bx, drawPartial);
+            payload.strokeAttribute.array[4] = THREE.MathUtils.lerp(ay, by, drawPartial);
+            payload.strokeAttribute.array[5] = THREE.MathUtils.lerp(az, bz, drawPartial);
+            payload.strokeAttribute.needsUpdate = true;
+
+            payload.strokeDrawOpacity = CONSTELLATION_STROKE_GLOW_MIN_OPACITY +
+                (1 - drawPartial) * (CONSTELLATION_STROKE_GLOW_OPACITY - CONSTELLATION_STROKE_GLOW_MIN_OPACITY);
+            payload.strokeLine.visible = true;
+        } else {
+            payload.strokeDrawOpacity = 0;
+            payload.strokeLine.visible = false;
+        }
     }
 
     payload.attribute.needsUpdate = true;
@@ -544,6 +589,12 @@ function updateConstellationEntryMotion(nowMs) {
         }
         if (constellationEntryState.linesFar && constellationEntryState.linesFar.geometry) {
             constellationEntryState.linesFar.geometry.setDrawRange(0, constellationEntryState.linesFar.segmentCount * 2);
+        }
+        if (constellationEntryState.linesNear && constellationEntryState.linesNear.strokeLine) {
+            constellationEntryState.linesNear.strokeLine.visible = false;
+        }
+        if (constellationEntryState.linesFar && constellationEntryState.linesFar.strokeLine) {
+            constellationEntryState.linesFar.strokeLine.visible = false;
         }
         constellationEntryState.active = false;
     }
@@ -1558,6 +1609,14 @@ function buildConstellation(image) {
         constellationLineFarMaterial.dispose();
         constellationLineFarMaterial = null;
     }
+    if (constellationLineStrokeMaterial) {
+        constellationLineStrokeMaterial.dispose();
+        constellationLineStrokeMaterial = null;
+    }
+    if (constellationLineFarStrokeMaterial) {
+        constellationLineFarStrokeMaterial.dispose();
+        constellationLineFarStrokeMaterial = null;
+    }
     if (constellationJoinFlashMaterial) {
         constellationJoinFlashMaterial.dispose();
         constellationJoinFlashMaterial = null;
@@ -1638,11 +1697,28 @@ function buildConstellation(image) {
         const lines = new THREE.LineSegments(lineGeometry, constellationLineMaterial);
         lines.renderOrder = 1;
         constellationGroup.add(lines);
+        constellationLineStrokeMaterial = new THREE.LineBasicMaterial({
+            color: 0xf2f8ff,
+            transparent: true,
+            opacity: 0,
+            depthWrite: false,
+            depthTest: true,
+            blending: THREE.AdditiveBlending
+        });
+        const strokeGeometry = new THREE.BufferGeometry();
+        const strokePositions = new Float32Array(6);
+        strokeGeometry.setAttribute("position", new THREE.BufferAttribute(strokePositions, 3));
+        const strokeLine = new THREE.LineSegments(strokeGeometry, constellationLineStrokeMaterial);
+        strokeLine.visible = false;
+        strokeLine.renderOrder = 5;
+        constellationGroup.add(strokeLine);
         nearLineEntryPayload.attribute = lineGeometry.attributes.position;
         nearLineEntryPayload.geometry = lineGeometry;
         nearLineEntryPayload.segmentCount = Math.floor(nearLineEntryPayload.base.length / 6);
         nearLineEntryPayload.revealedSegments = 0;
         nearLineEntryPayload.segmentFlashPairs = createSegmentFlashPairs(nearLineEntryPayload);
+        nearLineEntryPayload.strokeLine = strokeLine;
+        nearLineEntryPayload.strokeAttribute = strokeGeometry.attributes.position;
     }
 
     if (farLineEntryPayload) {
@@ -1660,11 +1736,28 @@ function buildConstellation(image) {
         const farLines = new THREE.LineSegments(lineGeometryFar, constellationLineFarMaterial);
         farLines.renderOrder = 0;
         constellationGroup.add(farLines);
+        constellationLineFarStrokeMaterial = new THREE.LineBasicMaterial({
+            color: 0xd8e7ff,
+            transparent: true,
+            opacity: 0,
+            depthWrite: false,
+            depthTest: true,
+            blending: THREE.AdditiveBlending
+        });
+        const strokeGeometryFar = new THREE.BufferGeometry();
+        const strokePositionsFar = new Float32Array(6);
+        strokeGeometryFar.setAttribute("position", new THREE.BufferAttribute(strokePositionsFar, 3));
+        const strokeLineFar = new THREE.LineSegments(strokeGeometryFar, constellationLineFarStrokeMaterial);
+        strokeLineFar.visible = false;
+        strokeLineFar.renderOrder = 4;
+        constellationGroup.add(strokeLineFar);
         farLineEntryPayload.attribute = lineGeometryFar.attributes.position;
         farLineEntryPayload.geometry = lineGeometryFar;
         farLineEntryPayload.segmentCount = Math.floor(farLineEntryPayload.base.length / 6);
         farLineEntryPayload.revealedSegments = 0;
         farLineEntryPayload.segmentFlashPairs = createSegmentFlashPairs(farLineEntryPayload);
+        farLineEntryPayload.strokeLine = strokeLineFar;
+        farLineEntryPayload.strokeAttribute = strokeGeometryFar.attributes.position;
     }
 
     const mouthLocalX = (CONSTELLATION_MOUTH_U - 0.5) * worldWidth;
@@ -2097,6 +2190,7 @@ function updateConstellation(nowMs) {
     }
 
     updateConstellationEntryMotion(nowMs);
+    updateConstellationJoinFlashes(nowMs);
 
     const fadeProgress = THREE.MathUtils.clamp(
         (nowMs - constellationReadyAtMs) / CONSTELLATION_FADE_MS,
@@ -2147,6 +2241,22 @@ function updateConstellation(nowMs) {
     }
     if (constellationLineFarMaterial) {
         constellationLineFarMaterial.opacity = lineOpacity * CONSTELLATION_FAR_LINE_OPACITY_MULT;
+    }
+    if (constellationLineStrokeMaterial && constellationEntryState && constellationEntryState.linesNear) {
+        const nearStrokeOpacity = constellationEntryState.linesNear.strokeDrawOpacity || 0;
+        constellationLineStrokeMaterial.opacity = THREE.MathUtils.clamp(
+            nearStrokeOpacity * fadeProgress * visibilityBoost * lineDrawBoost,
+            0,
+            0.98
+        );
+    }
+    if (constellationLineFarStrokeMaterial && constellationEntryState && constellationEntryState.linesFar) {
+        const farStrokeOpacity = constellationEntryState.linesFar.strokeDrawOpacity || 0;
+        constellationLineFarStrokeMaterial.opacity = THREE.MathUtils.clamp(
+            farStrokeOpacity * fadeProgress * visibilityBoost * lineDrawBoost * CONSTELLATION_STROKE_GLOW_FAR_MULT,
+            0,
+            0.8
+        );
     }
     constellationGroup.position.copy(constellationBasePosition);
     constellationGroup.rotation.x = -0.02;
