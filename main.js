@@ -17,6 +17,8 @@ const foods = [
     "ıslak hamburger"
 ];
 
+const BUILD_ID = "20260217-constellation-v5-line-trace";
+
 const BASE_STAR_COUNT = 22000;
 const MIN_STAR_COUNT = 7000;
 const STAR_FIELD_WIDTH = 2200;
@@ -33,7 +35,7 @@ const SPAWN_MAX_PER_FRAME = 5;
 
 const MIN_BLACKHOLE_RADIUS = 4;
 const MAX_BLACKHOLE_RADIUS = 18;
-const BLACKHOLE_LERP = 0.14;
+const BLACKHOLE_LERP = 0.26;
 const BLACKHOLE_GROW_START_MS = 260;
 const BLACKHOLE_GROW_FULL_MS = 3600;
 const BLACKHOLE_POWER_START_MS = 520;
@@ -44,15 +46,17 @@ const POWER_RESET_THRESHOLD_MOUSE_PX = 3;
 const POWER_RESET_THRESHOLD_TOUCH_PX = 9;
 
 const STAR_INFLUENCE_MULT = 2.9;
+const STAR_MIN_INFLUENCE_RADIUS = 22;
 const STAR_HORIZON_MULT = 0.5;
 const STAR_PULL_FORCE = 3.0;
 const STAR_SWIRL_FORCE = 1.45;
 const STAR_PUSH_FORCE = 2.6;
-const STAR_GRAVITY_BASE = 46;
+const STAR_GRAVITY_BASE = 58;
 const STAR_DRAG = 0.92;
 const STAR_HORIZON_CAPTURE_MULT = 1.08;
 
 const FOOD_INFLUENCE_MULT = 3.35;
+const FOOD_MIN_INFLUENCE_RADIUS = 28;
 const FOOD_HORIZON_MULT = 0.64;
 const FOOD_PULL_FORCE = 2.8;
 const FOOD_SWIRL_FORCE = 1.15;
@@ -60,7 +64,7 @@ const FOOD_PUSH_FORCE = 2.4;
 const FOOD_FLOW_POWER_MULT = 0.7;
 const FOOD_SPAWN_POWER_MULT = 0.78;
 const FOOD_MIN_SPAWN_INTERVAL_MS = 240;
-const FOOD_GRAVITY_BASE = 38;
+const FOOD_GRAVITY_BASE = 58;
 const FOOD_DRAG = 0.86;
 const FOOD_HORIZON_CAPTURE_MULT = 1.1;
 
@@ -153,6 +157,8 @@ function init() {
     renderer.domElement.style.touchAction = "none";
     renderer.domElement.style.cursor = "none";
     container.appendChild(renderer.domElement);
+
+    console.info("[husoyayazar] build", BUILD_ID);
 
     resolvePerformanceProfile();
     createStars();
@@ -331,7 +337,7 @@ function createStars() {
         size: 0.82,
         sizeAttenuation: true,
         transparent: true,
-        opacity: 0.82,
+        opacity: 0.56,
         depthWrite: false
     });
 
@@ -414,7 +420,7 @@ function loadConstellationFromImage(imageUrl) {
 }
 
 function buildConstellation(image) {
-    const scanMaxWidth = 320;
+    const scanMaxWidth = 560;
     const scanScale = Math.min(1, scanMaxWidth / image.width);
     const scanWidth = Math.max(96, Math.floor(image.width * scanScale));
     const scanHeight = Math.max(64, Math.floor(image.height * scanScale));
@@ -429,71 +435,133 @@ function buildConstellation(image) {
 
     context.drawImage(image, 0, 0, scanWidth, scanHeight);
     const pixels = context.getImageData(0, 0, scanWidth, scanHeight).data;
-    const sampleStep = 2;
+    const pixelCount = scanWidth * scanHeight;
+    const lum = new Float32Array(pixelCount);
+    const localMean = new Float32Array(pixelCount);
 
-    const candidates = [];
-    for (let y = 0; y < scanHeight; y += sampleStep) {
-        for (let x = 0; x < scanWidth; x += sampleStep) {
-            const pixelIndex = (y * scanWidth + x) * 4;
-            const r = pixels[pixelIndex];
-            const g = pixels[pixelIndex + 1];
-            const b = pixels[pixelIndex + 2];
-            const a = pixels[pixelIndex + 3];
+    for (let i = 0; i < pixelCount; i += 1) {
+        const p = i * 4;
+        const r = pixels[p];
+        const g = pixels[p + 1];
+        const b = pixels[p + 2];
+        lum[i] = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+    }
 
-            const alpha = a / 255;
-            const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
-            if (alpha < 0.05 && luminance < 0.1) {
+    for (let y = 0; y < scanHeight; y += 1) {
+        for (let x = 0; x < scanWidth; x += 1) {
+            const idx = y * scanWidth + x;
+            let sum = 0;
+            let count = 0;
+            for (let oy = -1; oy <= 1; oy += 1) {
+                const py = Math.min(scanHeight - 1, Math.max(0, y + oy));
+                for (let ox = -1; ox <= 1; ox += 1) {
+                    const px = Math.min(scanWidth - 1, Math.max(0, x + ox));
+                    sum += lum[py * scanWidth + px];
+                    count += 1;
+                }
+            }
+            localMean[idx] = sum / count;
+        }
+    }
+
+    const sortedLum = Array.from(lum);
+    sortedLum.sort((a, b) => a - b);
+    const lumThreshold = sortedLum[Math.floor(sortedLum.length * 0.968)];
+    const contrastThreshold = 4.5 / 255;
+
+    const rawMask = new Uint8Array(pixelCount);
+    for (let i = 0; i < pixelCount; i += 1) {
+        const contrast = lum[i] - localMean[i];
+        if (lum[i] >= lumThreshold && contrast >= contrastThreshold) {
+            rawMask[i] = 1;
+        }
+    }
+
+    const dilated = new Uint8Array(pixelCount);
+    for (let y = 0; y < scanHeight; y += 1) {
+        for (let x = 0; x < scanWidth; x += 1) {
+            const idx = y * scanWidth + x;
+            let on = 0;
+            for (let oy = -1; oy <= 1 && !on; oy += 1) {
+                const py = y + oy;
+                if (py < 0 || py >= scanHeight) {
+                    continue;
+                }
+                for (let ox = -1; ox <= 1; ox += 1) {
+                    const px = x + ox;
+                    if (px < 0 || px >= scanWidth) {
+                        continue;
+                    }
+                    if (rawMask[py * scanWidth + px]) {
+                        on = 1;
+                        break;
+                    }
+                }
+            }
+            dilated[idx] = on;
+        }
+    }
+
+    const mask = new Uint8Array(pixelCount);
+    for (let y = 0; y < scanHeight; y += 1) {
+        for (let x = 0; x < scanWidth; x += 1) {
+            const idx = y * scanWidth + x;
+            if (!dilated[idx]) {
+                continue;
+            }
+            let neighbors = 0;
+            for (let oy = -1; oy <= 1; oy += 1) {
+                const py = y + oy;
+                if (py < 0 || py >= scanHeight) {
+                    continue;
+                }
+                for (let ox = -1; ox <= 1; ox += 1) {
+                    if (ox === 0 && oy === 0) {
+                        continue;
+                    }
+                    const px = x + ox;
+                    if (px < 0 || px >= scanWidth) {
+                        continue;
+                    }
+                    if (dilated[py * scanWidth + px]) {
+                        neighbors += 1;
+                    }
+                }
+            }
+            if (neighbors >= 2) {
+                mask[idx] = 1;
+            }
+        }
+    }
+
+    const worldWidth = 320;
+    const worldHeight = worldWidth * (scanHeight / scanWidth);
+
+    const pointTriples = [];
+    const gridPointIndex = new Int32Array(pixelCount);
+    gridPointIndex.fill(-1);
+
+    let pointIndex = 0;
+    for (let y = 0; y < scanHeight; y += 1) {
+        for (let x = 0; x < scanWidth; x += 1) {
+            const idx = y * scanWidth + x;
+            if (!mask[idx]) {
                 continue;
             }
 
-            const weight = luminance * 0.7 + alpha * 0.3;
-            if (weight < 0.15) {
-                continue;
-            }
-
-            const hash = ((x * 73856093) ^ (y * 19349663)) >>> 0;
-            const keepChance = 0.16 + weight * 0.62;
+            const hash = ((x * 73856093) ^ (y * 19349663) ^ ((x + y) * 83492791)) >>> 0;
+            const keepChance = THREE.MathUtils.clamp(0.72 + (lum[idx] - lumThreshold) * 4.2, 0.62, 0.98);
             if ((hash % 1000) / 1000 > keepChance) {
                 continue;
             }
 
-            candidates.push({ x, y, weight });
-        }
-    }
+            const wx = (x / (scanWidth - 1) - 0.5) * worldWidth;
+            const wy = (0.5 - y / (scanHeight - 1)) * worldHeight;
+            const wz = -190 + (Math.random() - 0.5) * 2.2;
 
-    if (!candidates.length) {
-        return;
-    }
-
-    const targetPointCount = 2600;
-    const stride = Math.max(1, Math.floor(candidates.length / targetPointCount));
-    const worldWidth = 330;
-    const worldHeight = worldWidth * (scanHeight / scanWidth);
-
-    const pointTriples = [];
-    const sampled = [];
-    const sampledLookup = new Map();
-
-    for (let i = 0; i < candidates.length; i += stride) {
-        const candidate = candidates[i];
-        const wx = (candidate.x / (scanWidth - 1) - 0.5) * worldWidth;
-        const wy = (0.5 - candidate.y / (scanHeight - 1)) * worldHeight;
-        const wz = -185 + (Math.random() - 0.5) * 2.2;
-
-        const sampledIndex = sampled.length;
-        sampled.push({
-            pixelX: candidate.x,
-            pixelY: candidate.y,
-            weight: candidate.weight,
-            x: wx,
-            y: wy,
-            z: wz
-        });
-        sampledLookup.set(`${candidate.x}|${candidate.y}`, sampledIndex);
-        pointTriples.push(wx, wy, wz);
-
-        if (sampled.length >= targetPointCount) {
-            break;
+            pointTriples.push(wx, wy, wz);
+            gridPointIndex[idx] = pointIndex;
+            pointIndex += 1;
         }
     }
 
@@ -502,57 +570,55 @@ function buildConstellation(image) {
     }
 
     const lineTriples = [];
-    const neighbors = [
-        [sampleStep, 0],
-        [0, sampleStep],
-        [sampleStep, sampleStep],
-        [-sampleStep, sampleStep],
-        [sampleStep * 2, 0],
-        [0, sampleStep * 2]
+    const neighborOffsets = [
+        [1, 0],
+        [0, 1],
+        [1, 1]
     ];
-    const maxSegments = 7600;
-
-    for (let i = 0; i < sampled.length; i += 1) {
-        const point = sampled[i];
-
-        for (let n = 0; n < neighbors.length; n += 1) {
-            if (lineTriples.length / 6 >= maxSegments) {
-                break;
-            }
-
-            const dx = neighbors[n][0];
-            const dy = neighbors[n][1];
-            const neighborIndex = sampledLookup.get(`${point.pixelX + dx}|${point.pixelY + dy}`);
-            if (neighborIndex === undefined || neighborIndex <= i) {
+    for (let y = 0; y < scanHeight; y += 1) {
+        for (let x = 0; x < scanWidth; x += 1) {
+            const idx = y * scanWidth + x;
+            const aIndex = gridPointIndex[idx];
+            if (aIndex < 0) {
                 continue;
             }
+            const ax = pointTriples[aIndex * 3];
+            const ay = pointTriples[aIndex * 3 + 1];
+            const az = pointTriples[aIndex * 3 + 2];
 
-            const neighbor = sampled[neighborIndex];
-            const worldDx = point.x - neighbor.x;
-            const worldDy = point.y - neighbor.y;
-            const distSq = worldDx * worldDx + worldDy * worldDy;
-            if (distSq > 22 * 22) {
-                continue;
+            for (let n = 0; n < neighborOffsets.length; n += 1) {
+                const ox = neighborOffsets[n][0];
+                const oy = neighborOffsets[n][1];
+                const nx = x + ox;
+                const ny = y + oy;
+                if (nx < 0 || nx >= scanWidth || ny < 0 || ny >= scanHeight) {
+                    continue;
+                }
+                const bIndex = gridPointIndex[ny * scanWidth + nx];
+                if (bIndex < 0) {
+                    continue;
+                }
+
+                const bx = pointTriples[bIndex * 3];
+                const by = pointTriples[bIndex * 3 + 1];
+                const bz = pointTriples[bIndex * 3 + 2];
+
+                lineTriples.push(ax, ay, az, bx, by, bz);
             }
-
-            const hash = (((point.pixelX + neighbor.pixelX) * 92821) ^ ((point.pixelY + neighbor.pixelY) * 68917)) >>> 0;
-            const connectChance = 0.18 + Math.min(0.5, (point.weight + neighbor.weight) * 0.24);
-            if ((hash % 1000) / 1000 > connectChance) {
-                continue;
-            }
-
-            lineTriples.push(
-                point.x,
-                point.y,
-                point.z,
-                neighbor.x,
-                neighbor.y,
-                neighbor.z
-            );
         }
+    }
 
-        if (lineTriples.length / 6 >= maxSegments) {
-            break;
+    if (!lineTriples.length) {
+        for (let i = 0; i < pointTriples.length; i += 6) {
+            const ax = pointTriples[i];
+            const ay = pointTriples[i + 1];
+            const az = pointTriples[i + 2];
+            const bx = pointTriples[i + 3];
+            const by = pointTriples[i + 4];
+            const bz = pointTriples[i + 5];
+            if (Number.isFinite(bx) && Number.isFinite(by) && Number.isFinite(bz)) {
+                lineTriples.push(ax, ay, az, bx, by, bz);
+            }
         }
     }
 
@@ -561,11 +627,11 @@ function buildConstellation(image) {
     const pointsGeometry = new THREE.BufferGeometry();
     pointsGeometry.setAttribute("position", new THREE.Float32BufferAttribute(pointTriples, 3));
     constellationPointsMaterial = new THREE.PointsMaterial({
-        color: 0xb7d6ff,
-        size: 1.9,
+        color: 0x8dc7ff,
+        size: 2.4,
         sizeAttenuation: true,
         transparent: true,
-        opacity: 0.24,
+        opacity: 0.44,
         depthWrite: false,
         depthTest: false,
         blending: THREE.AdditiveBlending
@@ -578,9 +644,9 @@ function buildConstellation(image) {
         const lineGeometry = new THREE.BufferGeometry();
         lineGeometry.setAttribute("position", new THREE.Float32BufferAttribute(lineTriples, 3));
         constellationLineMaterial = new THREE.LineBasicMaterial({
-            color: 0x8bb7ff,
+            color: 0x76b6ff,
             transparent: true,
-            opacity: 0.14,
+            opacity: 0.34,
             depthWrite: false,
             depthTest: false,
             blending: THREE.AdditiveBlending
@@ -590,8 +656,8 @@ function buildConstellation(image) {
         constellationGroup.add(lines);
     }
 
-    constellationGroup.scale.set(2.05, 2.05, 1);
-    constellationGroup.position.set(0, 10, -20);
+    constellationGroup.scale.set(2.48, 2.48, 1);
+    constellationGroup.position.set(0, 2, -20);
     constellationGroup.rotation.x = -0.02;
     scene.add(constellationGroup);
 }
@@ -750,7 +816,10 @@ function updateStars(delta) {
     const rayY = pointerRayDir.y;
     const rayZ = pointerRayDir.z;
 
-    const influenceRadius = blackHoleRadius * STAR_INFLUENCE_MULT * (1 + blackHolePower * 0.22);
+    const influenceRadius = Math.max(
+        STAR_MIN_INFLUENCE_RADIUS,
+        blackHoleRadius * STAR_INFLUENCE_MULT * (1 + blackHolePower * 0.22)
+    );
     const influenceRadiusSq = influenceRadius * influenceRadius;
     const horizonRadius = blackHoleRadius * STAR_HORIZON_MULT * (1 + blackHolePower * 0.1);
     const captureRadius = horizonRadius * STAR_HORIZON_CAPTURE_MULT;
@@ -849,7 +918,10 @@ function updateFoodMeshes(delta) {
     const rayY = pointerRayDir.y;
     const rayZ = pointerRayDir.z;
 
-    const influenceRadius = blackHoleRadius * FOOD_INFLUENCE_MULT * (1 + blackHolePower * 0.24);
+    const influenceRadius = Math.max(
+        FOOD_MIN_INFLUENCE_RADIUS,
+        blackHoleRadius * FOOD_INFLUENCE_MULT * (1 + blackHolePower * 0.24)
+    );
     const influenceRadiusSq = influenceRadius * influenceRadius;
     const horizonRadius = blackHoleRadius * FOOD_HORIZON_MULT * (1 + blackHolePower * 0.12);
     const captureRadius = horizonRadius * FOOD_HORIZON_CAPTURE_MULT;
@@ -931,13 +1003,13 @@ function updateConstellation(nowMs) {
         return;
     }
 
-    const pulse = 0.2 + Math.sin(nowMs * 0.00028) * 0.025;
+    const pulse = 0.28 + Math.sin(nowMs * 0.00028) * 0.035;
     constellationPointsMaterial.opacity = pulse;
     if (constellationLineMaterial) {
-        constellationLineMaterial.opacity = Math.max(0.09, pulse * 0.66);
+        constellationLineMaterial.opacity = Math.max(0.14, pulse * 0.68);
     }
 
-    constellationGroup.position.y = 10 + Math.sin(nowMs * 0.00011) * 1.8;
+    constellationGroup.position.y = 2 + Math.sin(nowMs * 0.00011) * 1.8;
 }
 
 function animate(nowMs = performance.now()) {
