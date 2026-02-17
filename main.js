@@ -1947,9 +1947,15 @@ function createFoodMesh(text) {
     mesh.position.set(startX, startY, z);
     mesh.rotation.x = FOOD_TILT_X;
     mesh.rotation.z = THREE.MathUtils.randFloatSpread(0.28);
+    const baseVx = (dirX / length) * speed;
+    const baseVy = (dirY / length) * speed;
     mesh.userData = {
-        vx: (dirX / length) * speed,
-        vy: (dirY / length) * speed,
+        baseVx,
+        baseVy,
+        vx: baseVx,
+        vy: baseVy,
+        forceVx: 0,
+        forceVy: 0,
         travelLength: length,
         traveled: 0,
         spinSpeed
@@ -2211,9 +2217,83 @@ function updateStars(delta, nowMs) {
 }
 
 function updateFoodMeshes(delta) {
+    const hasInfluence = blackHoleRadius > 0.5;
+
+    const cameraX = camera.position.x;
+    const cameraY = camera.position.y;
+    const cameraZ = camera.position.z;
+    const rayX = pointerRayDir.x;
+    const rayY = pointerRayDir.y;
+    const rayZ = pointerRayDir.z;
+
+    const influenceRadius = Math.max(
+        FOOD_MIN_INFLUENCE_RADIUS,
+        blackHoleRadius * FOOD_INFLUENCE_MULT * (1 + blackHolePower * 0.24)
+    );
+    const influenceRadiusSq = influenceRadius * influenceRadius;
+    const horizonRadius = blackHoleRadius * FOOD_HORIZON_MULT * (1 + blackHolePower * 0.12);
+    const captureRadius = horizonRadius * FOOD_HORIZON_CAPTURE_MULT;
+    const gravityStrength = FOOD_GRAVITY_BASE * (1 + blackHolePower * 1.2);
+    const pullForceBase = FOOD_PULL_FORCE * (1 + blackHolePower * 0.75);
+    const swirlForceBase = FOOD_SWIRL_FORCE * (1 + blackHolePower * 0.5);
+    const flowSpeedMul = 1 + blackHolePower * FOOD_FLOW_POWER_MULT;
+    const drag = Math.pow(FOOD_DRAG, delta);
+
     for (let i = foodMeshes.length - 1; i >= 0; i -= 1) {
         const mesh = foodMeshes[i];
         const state = mesh.userData;
+
+        let ax = 0;
+        let ay = 0;
+
+        if (hasInfluence) {
+            const t = (mesh.position.z - cameraZ) / rayZ;
+            const mouseX = cameraX + rayX * t;
+            const mouseY = cameraY + rayY * t;
+            const dx = mesh.position.x - mouseX;
+            const dy = mesh.position.y - mouseY;
+            const distSq = dx * dx + dy * dy;
+
+            if (distSq < influenceRadiusSq) {
+                const dist = Math.sqrt(distSq) + 0.0001;
+                if (dist < captureRadius) {
+                    removeFoodAt(i);
+                    continue;
+                }
+
+                const nx = dx / dist;
+                const ny = dy / dist;
+                const tx = -ny;
+                const ty = nx;
+                const falloff = 1 - dist / influenceRadius;
+                const inverseDistSq = 1 / (distSq + 16);
+                const radialForce = gravityStrength * inverseDistSq * (0.34 + falloff * falloff * 2.5);
+                const horizonBoost = 1 + Math.pow(horizonRadius / Math.max(dist, horizonRadius), 2.2) * 2.1;
+
+                if (isRightPointerDown) {
+                    const pushForce = radialForce * FOOD_PUSH_FORCE;
+                    ax += nx * pushForce;
+                    ay += ny * pushForce;
+                } else {
+                    const orbitBias = THREE.MathUtils.clamp(1 - dist / influenceRadius, 0, 1);
+                    const pullForce = radialForce * pullForceBase * (1 + orbitBias * 0.52) * horizonBoost;
+                    const swirlDampNearCore = THREE.MathUtils.clamp(
+                        (dist - captureRadius) / (influenceRadius - captureRadius + 0.0001),
+                        0,
+                        1
+                    );
+                    const swirlForce = radialForce * swirlForceBase * (0.3 + orbitBias * 0.98) * swirlDampNearCore;
+
+                    ax += -nx * pullForce + tx * swirlForce;
+                    ay += -ny * pullForce + ty * swirlForce;
+                }
+            }
+        }
+
+        state.forceVx = (state.forceVx + ax * delta) * drag;
+        state.forceVy = (state.forceVy + ay * delta) * drag;
+        state.vx = state.baseVx * flowSpeedMul + state.forceVx;
+        state.vy = state.baseVy * flowSpeedMul + state.forceVy;
 
         const stepX = state.vx * delta;
         const stepY = state.vy * delta;
@@ -2221,9 +2301,7 @@ function updateFoodMeshes(delta) {
         mesh.position.y += stepY;
         state.traveled += Math.hypot(stepX, stepY);
 
-        if (state.spinSpeed) {
-            mesh.rotation.z += state.spinSpeed * delta;
-        }
+        mesh.rotation.z += state.spinSpeed * delta + Math.abs(state.forceVx) * 0.0013;
 
         const progress = THREE.MathUtils.clamp(state.traveled / Math.max(0.0001, state.travelLength), 0, 1);
         const fadeIn = THREE.MathUtils.clamp(progress / 0.15, 0, 1);
