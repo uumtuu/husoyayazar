@@ -859,6 +859,7 @@ function bindEvents() {
     window.addEventListener("keydown", (event) => {
         if (event.code === "Space") {
             event.preventDefault();
+            registerUserActivity(performance.now());
             blackHolePulse = Math.max(blackHolePulse, 11);
             spawnFoodFromBlackHole();
         }
@@ -883,7 +884,13 @@ function clearPointerPushState() {
     powerAnchorClientY = null;
 }
 
+function registerUserActivity(nowMs = performance.now()) {
+    lastPointerMoveMs = nowMs;
+    singularityCollapse = 0;
+}
+
 function onPointerDown(event) {
+    registerUserActivity(performance.now());
     pointerInside = true;
     onPointerMove(event);
 
@@ -952,6 +959,10 @@ function onPointerMove(event) {
     pointerTargetNDC.x = x * 2 - 1;
     pointerTargetNDC.y = -(y * 2 - 1);
     pointerInside = true;
+
+    if (singularityCollapse > 0.001) {
+        registerUserActivity(now);
+    }
 
     if (powerAnchorClientX === null || powerAnchorClientY === null) {
         powerAnchorClientX = event.clientX;
