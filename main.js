@@ -2662,6 +2662,7 @@ function updateNebula(nowMs) {
 function updateStars(delta, nowMs) {
     const positions = starPositions;
     const collapse = singularityCollapse;
+    const collapseEase = collapse * collapse;
     const hasCollapse = collapse > 0.0001;
     const hasInfluence = blackHoleRadius > 0.5 || hasCollapse;
     const sceneDarkness = 1 - collapse * 0.97;
