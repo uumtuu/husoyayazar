@@ -69,9 +69,9 @@ const BLACKHOLE_PHOTON_RING_SCALE_MULT = 1.6;
 const BLACKHOLE_PHOTON_RING_OPACITY_BASE = 0.18;
 const BLACKHOLE_PHOTON_RING_OPACITY_POWER_MULT = 0.13;
 const SINGULARITY_IDLE_TRIGGER_MS = 5000;
-const SINGULARITY_RAMP_MS = 6400;
+const SINGULARITY_RAMP_MS = 4200;
 const SINGULARITY_MAX_OVERLAY_OPACITY = 0.996;
-const SINGULARITY_PULL_FORCE = 240;
+const SINGULARITY_PULL_FORCE = 320;
 const SINGULARITY_CAPTURE_RADIUS_MAX = 220;
 
 const STAR_INFLUENCE_MULT = 2.9;
@@ -806,7 +806,13 @@ function init() {
     renderer.outputEncoding = THREE.sRGBEncoding;
     renderer.domElement.style.touchAction = "none";
     renderer.domElement.style.cursor = "none";
+    renderer.domElement.style.outline = "none";
+    renderer.domElement.tabIndex = 0;
     container.appendChild(renderer.domElement);
+    renderer.domElement.focus({ preventScroll: true });
+    window.focus();
+
+    pointerInside = true;
 
     console.info("[husoyayazar] build", BUILD_ID);
 
@@ -857,7 +863,7 @@ function bindEvents() {
     });
 
     window.addEventListener("keydown", (event) => {
-        if (event.code === "Space") {
+        if (event.code === "Space" || event.key === " " || event.key === "Spacebar") {
             event.preventDefault();
             registerUserActivity(performance.now());
             blackHolePulse = Math.max(blackHolePulse, 11);
@@ -890,6 +896,9 @@ function registerUserActivity(nowMs = performance.now()) {
 }
 
 function onPointerDown(event) {
+    if (renderer && renderer.domElement) {
+        renderer.domElement.focus({ preventScroll: true });
+    }
     registerUserActivity(performance.now());
     pointerInside = true;
     onPointerMove(event);
@@ -1576,8 +1585,6 @@ function updateShootingStars(delta, nowMs) {
     const rayX = pointerRayDir.x;
     const rayY = pointerRayDir.y;
     const rayZ = pointerRayDir.z;
-    const collapseEase = collapse * collapse;
-
     if (shootingStars.length < SHOOTING_STAR_MAX_ACTIVE && nowMs >= nextShootingStarAtMs) {
         createShootingStar(nowMs);
         scheduleNextShootingStar(nowMs);
@@ -1605,7 +1612,7 @@ function updateShootingStars(delta, nowMs) {
             const dx = star.position.x - sinkX;
             const dy = star.position.y - sinkY;
             const dist = Math.sqrt(dx * dx + dy * dy) + 0.0001;
-            const collapsePull = collapse * collapse;
+            const collapsePull = THREE.MathUtils.clamp(0.12 + collapse * 1.05, 0, 1.2);
             const pull = (SINGULARITY_PULL_FORCE * collapsePull * 1.35) / (dist + 14);
             star.position.x += (-dx / dist) * pull * delta;
             star.position.y += (-dy / dist) * pull * delta;
@@ -2300,16 +2307,17 @@ function spawnFoodFromBlackHole() {
         opacity: 0.96
     });
 
-    const z = THREE.MathUtils.randFloat(-8, 16);
+    const z = THREE.MathUtils.randFloat(2, 12);
     pointerAtZ(z, singularityVectorA);
 
     const angle = Math.random() * Math.PI * 2;
-    const speed = THREE.MathUtils.randFloat(1.35, 2.75) + blackHolePower * 0.22;
+    const speed = THREE.MathUtils.randFloat(2.4, 4.2) + blackHolePower * 0.28;
     const baseVx = Math.cos(angle) * speed;
     const baseVy = Math.sin(angle) * speed;
-    const launchOffset = 0.25 + Math.max(blackHoleRadius * 0.08, 0);
+    const launchOffset = 0.55 + Math.max(blackHoleRadius * 0.13, 0);
     const { halfWidth, halfHeight } = getPlaneHalfExtentsAtZ(z);
-    const travelLength = Math.hypot(halfWidth, halfHeight) * THREE.MathUtils.randFloat(1.2, 1.9);
+    const travelLength = Math.hypot(halfWidth, halfHeight) * THREE.MathUtils.randFloat(1.05, 1.45);
+    const initialTravel = travelLength * 0.06;
     const spinSpeed = THREE.MathUtils.randFloat(FOOD_SPIN_SPEED_MIN, FOOD_SPIN_SPEED_MAX) * (Math.random() < 0.5 ? -1 : 1);
 
     const mesh = new THREE.Mesh(geometry, material);
@@ -2320,6 +2328,7 @@ function spawnFoodFromBlackHole() {
     );
     mesh.rotation.x = FOOD_TILT_X;
     mesh.rotation.z = angle + THREE.MathUtils.randFloatSpread(0.22);
+    mesh.renderOrder = 12;
     mesh.userData = {
         baseVx,
         baseVy,
@@ -2328,7 +2337,7 @@ function spawnFoodFromBlackHole() {
         forceVx: 0,
         forceVy: 0,
         travelLength,
-        traveled: 0,
+        traveled: initialTravel,
         spinSpeed
     };
 
@@ -2386,25 +2395,23 @@ function updateBlackHole(delta, nowMs) {
     let targetPower = 0;
     let collapseTarget = 0;
 
-    if (pointerInside) {
-        const growProgress = THREE.MathUtils.clamp(
-            (idleMs - BLACKHOLE_GROW_START_MS) / (BLACKHOLE_GROW_FULL_MS - BLACKHOLE_GROW_START_MS),
-            0,
-            1
-        );
-        const smoothGrow = growProgress * growProgress * (3 - 2 * growProgress);
-        targetRadius = THREE.MathUtils.lerp(MIN_BLACKHOLE_RADIUS, MAX_BLACKHOLE_RADIUS, smoothGrow);
+    const growProgress = THREE.MathUtils.clamp(
+        (idleMs - BLACKHOLE_GROW_START_MS) / (BLACKHOLE_GROW_FULL_MS - BLACKHOLE_GROW_START_MS),
+        0,
+        1
+    );
+    const smoothGrow = growProgress * growProgress * (3 - 2 * growProgress);
+    targetRadius = THREE.MathUtils.lerp(MIN_BLACKHOLE_RADIUS, MAX_BLACKHOLE_RADIUS, smoothGrow);
 
-        const powerSeconds = Math.max(0, (idleMs - BLACKHOLE_POWER_START_MS) / 1000);
-        targetPower = Math.min(BLACKHOLE_POWER_MAX, powerSeconds * BLACKHOLE_POWER_RATE);
+    const powerSeconds = Math.max(0, (idleMs - BLACKHOLE_POWER_START_MS) / 1000);
+    targetPower = Math.min(BLACKHOLE_POWER_MAX, powerSeconds * BLACKHOLE_POWER_RATE);
 
-        const collapseRaw = THREE.MathUtils.clamp(
-            (idleMs - SINGULARITY_IDLE_TRIGGER_MS) / SINGULARITY_RAMP_MS,
-            0,
-            1
-        );
-        collapseTarget = collapseRaw * collapseRaw * (3 - 2 * collapseRaw);
-    }
+    const collapseRaw = THREE.MathUtils.clamp(
+        (idleMs - SINGULARITY_IDLE_TRIGGER_MS) / SINGULARITY_RAMP_MS,
+        0,
+        1
+    );
+    collapseTarget = collapseRaw * collapseRaw * (3 - 2 * collapseRaw);
 
     const collapseLerp = collapseTarget > singularityCollapse ? 0.032 : 0.16;
     singularityCollapse = THREE.MathUtils.lerp(singularityCollapse, collapseTarget, collapseLerp * delta);
@@ -2591,7 +2598,7 @@ function updateDeepStars(delta, nowMs) {
             const dx = x - sinkX;
             const dy = y - sinkY;
             const dist = Math.sqrt(dx * dx + dy * dy) + 0.0001;
-            const collapsePull = collapse * collapse;
+            const collapsePull = THREE.MathUtils.clamp(0.1 + collapse * 1.05, 0, 1.2);
             const pull = (SINGULARITY_PULL_FORCE * collapsePull * 1.15) / (dist + 42);
             x += (-dx / dist) * pull * delta;
             y += (-dy / dist) * pull * delta;
@@ -2635,7 +2642,6 @@ function updateNebula(nowMs) {
     }
 
     const collapse = singularityCollapse;
-    const collapseEase = collapse * collapse;
     const parallaxX = pointerSmoothNDC.x * NEBULA_POINTER_PARALLAX_X;
     const parallaxY = pointerSmoothNDC.y * NEBULA_POINTER_PARALLAX_Y;
 
@@ -2651,7 +2657,7 @@ function updateNebula(nowMs) {
 
         if (collapse > 0.0001) {
             pointerAtZ(layer.position.z, singularityVectorA);
-            const pullLerp = THREE.MathUtils.clamp(collapseEase * 0.2, 0, 0.32);
+            const pullLerp = THREE.MathUtils.clamp(0.01 + collapse * 0.18, 0, 0.32);
             layer.position.x = THREE.MathUtils.lerp(layer.position.x, singularityVectorA.x, pullLerp);
             layer.position.y = THREE.MathUtils.lerp(layer.position.y, singularityVectorA.y, pullLerp);
             layer.material.opacity *= Math.max(0, 1 - collapse * 1.4);
@@ -2662,7 +2668,7 @@ function updateNebula(nowMs) {
 function updateStars(delta, nowMs) {
     const positions = starPositions;
     const collapse = singularityCollapse;
-    const collapseEase = collapse * collapse;
+    const collapsePull = THREE.MathUtils.clamp(0.08 + collapse * 1.12, 0, 1.35);
     const hasCollapse = collapse > 0.0001;
     const hasInfluence = blackHoleRadius > 0.5 || hasCollapse;
     const sceneDarkness = 1 - collapse * 0.97;
@@ -2681,7 +2687,7 @@ function updateStars(delta, nowMs) {
     const influenceRadiusSq = influenceRadius * influenceRadius;
     const horizonRadius = blackHoleRadius * STAR_HORIZON_MULT * (1 + blackHolePower * 0.1);
     const captureRadius = horizonRadius * STAR_HORIZON_CAPTURE_MULT;
-    const collapseInfluenceRadius = STAR_FIELD_WIDTH * collapseEase * 1.45;
+    const collapseInfluenceRadius = STAR_FIELD_WIDTH * THREE.MathUtils.clamp(0.05 + collapse * 1.1, 0, 1.45);
     const collapseInfluenceRadiusSq = collapseInfluenceRadius * collapseInfluenceRadius;
     const collapseCaptureRadius = 4 + collapse * SINGULARITY_CAPTURE_RADIUS_MAX;
     const gravityStrength = STAR_GRAVITY_BASE * (1 + blackHolePower * 1.28 + collapse * 1.8);
@@ -2767,7 +2773,7 @@ function updateStars(delta, nowMs) {
                     const swirlDampNearCore = THREE.MathUtils.clamp((dist - captureRadius) / (influenceRadius - captureRadius + 0.0001), 0, 1);
                     let swirlForce = radialForce * swirlForceBase * (0.35 + orbitBias * 0.95) * swirlDampNearCore;
                     if (hasCollapse) {
-                        const sinkPull = (SINGULARITY_PULL_FORCE * collapseEase * 1.2) / (dist + 16);
+                        const sinkPull = (SINGULARITY_PULL_FORCE * collapsePull * 1.2) / (dist + 16);
                         vx += -nx * sinkPull * delta;
                         vy += -ny * sinkPull * delta;
                         swirlForce *= 0.58;
@@ -2838,7 +2844,7 @@ function updateStars(delta, nowMs) {
 
 function updateFoodMeshes(delta) {
     const collapse = singularityCollapse;
-    const collapseEase = collapse * collapse;
+    const collapsePull = THREE.MathUtils.clamp(0.1 + collapse * 1.18, 0, 1.4);
     const hasCollapse = collapse > 0.0001;
     const hasInfluence = blackHoleRadius > 0.5 || hasCollapse;
 
@@ -2856,7 +2862,7 @@ function updateFoodMeshes(delta) {
     const influenceRadiusSq = influenceRadius * influenceRadius;
     const horizonRadius = blackHoleRadius * FOOD_HORIZON_MULT * (1 + blackHolePower * 0.12);
     const captureRadius = horizonRadius * FOOD_HORIZON_CAPTURE_MULT;
-    const collapseInfluenceRadius = STAR_FIELD_WIDTH * collapseEase * 1.25;
+    const collapseInfluenceRadius = STAR_FIELD_WIDTH * THREE.MathUtils.clamp(0.045 + collapse * 1.02, 0, 1.25);
     const collapseInfluenceRadiusSq = collapseInfluenceRadius * collapseInfluenceRadius;
     const collapseCaptureRadius = 5 + collapse * (SINGULARITY_CAPTURE_RADIUS_MAX * 0.14);
     const gravityStrength = FOOD_GRAVITY_BASE * (1 + blackHolePower * 1.2);
@@ -2918,7 +2924,7 @@ function updateFoodMeshes(delta) {
                 }
 
                 if (hasCollapse) {
-                    const sinkPull = (SINGULARITY_PULL_FORCE * collapseEase * 1.3) / (dist + 22);
+                    const sinkPull = (SINGULARITY_PULL_FORCE * collapsePull * 1.3) / (dist + 22);
                     ax += -nx * sinkPull;
                     ay += -ny * sinkPull;
                     ax += tx * sinkPull * 0.15;
@@ -2981,7 +2987,6 @@ function updateConstellation(nowMs) {
     const sparkleBoost = getConstellationSparkleBoost(nowMs);
     const powerBoost = 1 + blackHolePower * CONSTELLATION_VISIBILITY_POWER_MULT;
     const collapse = singularityCollapse;
-    const collapseEase = collapse * collapse;
     const collapseVisibility = Math.max(0, 1 - collapse * 0.995);
     const visibilityBoost = CONSTELLATION_VISIBILITY_MULT * powerBoost * entryFlash * sparkleBoost * collapseVisibility;
     const pulse =
@@ -3040,7 +3045,7 @@ function updateConstellation(nowMs) {
 
     if (collapse > 0.0001) {
         pointerAtZ(constellationBasePosition.z, singularityVectorB);
-        const pullLerp = THREE.MathUtils.clamp(collapseEase * 0.23, 0, 0.35);
+        const pullLerp = THREE.MathUtils.clamp(0.018 + collapse * 0.24, 0, 0.35);
         constellationGroup.position.lerp(singularityVectorB, pullLerp);
 
         const scaleMul = Math.max(0.02, 1 - collapse * 0.92);
