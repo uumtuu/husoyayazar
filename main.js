@@ -74,6 +74,12 @@ const SINGULARITY_MAX_OVERLAY_OPACITY = 0.996;
 const SINGULARITY_PULL_FORCE = 320;
 const SINGULARITY_CAPTURE_RADIUS_MAX = 220;
 const BLACKHOLE_FOOD_LAUNCH_GRACE_MS = 620;
+const SPACE_COUNTER_TARGET = 500;
+const DUAL_CONSTELLATION_SPLIT_X = 430;
+const DUAL_CONSTELLATION_SLIDE_MS = 3600;
+const COMPANION_CONSTELLATION_FADE_MS = 1300;
+const COMPANION_CONSTELLATION_IMAGE_URL = "bayanhuso.png";
+const COMPANION_CONSTELLATION_FALLBACK_IMAGE_URL = "husospace.png";
 
 const STAR_INFLUENCE_MULT = 2.9;
 const STAR_MIN_INFLUENCE_RADIUS = 22;
@@ -225,6 +231,9 @@ let constellationNextSparkleAtMs = performance.now() + 5200;
 let constellationEntryState = null;
 let constellationReadyAtMs = 0;
 const constellationBasePosition = new THREE.Vector3();
+let companionConstellation = null;
+let companionConstellationLoading = false;
+const companionConstellationBasePosition = new THREE.Vector3();
 let nebulaGroup;
 let nebulaLayers = [];
 let shootingStarTexture;
@@ -254,6 +263,13 @@ let touchHoldPointerId = null;
 let touchHoldActivated = false;
 let powerAnchorClientX = null;
 let powerAnchorClientY = null;
+let spaceLaunchCount = 0;
+let starCounterElement = null;
+let starCounterValueElement = null;
+let starCounterGlowUntilMs = 0;
+let dualConstellationActive = false;
+let dualConstellationActivatedAtMs = 0;
+let dualConstellationProgress = 0;
 
 function getPlaneHalfExtentsAtZ(zValue) {
     if (!camera) {
@@ -785,6 +801,616 @@ function resolvePerformanceProfile() {
     maxActiveFood = Math.max(28, Math.round(FOOD_MAX_ACTIVE * foodMultiplier));
 }
 
+function createStarCounterUI() {
+    if (starCounterElement || !document.body) {
+        return;
+    }
+
+    const root = document.createElement("div");
+    root.setAttribute("aria-hidden", "true");
+    Object.assign(root.style, {
+        position: "fixed",
+        top: "12px",
+        right: "14px",
+        zIndex: "90",
+        pointerEvents: "none",
+        userSelect: "none",
+        padding: "6px 10px",
+        borderRadius: "999px",
+        border: "1px solid rgba(160, 205, 255, 0.24)",
+        background: "rgba(8, 14, 24, 0.24)",
+        color: "rgba(225, 240, 255, 0.9)",
+        fontFamily: "\"Trebuchet MS\", \"Segoe UI\", sans-serif",
+        fontSize: "12px",
+        letterSpacing: "0.55px",
+        lineHeight: "1"
+    });
+
+    const stars = document.createElement("span");
+    stars.textContent = "✦✧ ";
+    stars.style.opacity = "0.85";
+    root.appendChild(stars);
+
+    const value = document.createElement("span");
+    value.style.fontWeight = "700";
+    value.style.minWidth = "40px";
+    value.style.display = "inline-block";
+    value.style.textAlign = "right";
+    root.appendChild(value);
+    starCounterValueElement = value;
+
+    const goal = document.createElement("span");
+    goal.textContent = ` / ${SPACE_COUNTER_TARGET}`;
+    goal.style.opacity = "0.64";
+    root.appendChild(goal);
+
+    starCounterElement = root;
+    updateStarCounterDisplay();
+    document.body.appendChild(root);
+}
+
+function updateStarCounterDisplay() {
+    if (!starCounterValueElement) {
+        return;
+    }
+
+    const value = String(spaceLaunchCount).padStart(3, "0");
+    starCounterValueElement.textContent = value;
+    if (spaceLaunchCount >= SPACE_COUNTER_TARGET) {
+        starCounterValueElement.style.color = "rgba(255, 228, 164, 0.98)";
+    } else {
+        starCounterValueElement.style.color = "rgba(222, 242, 255, 0.96)";
+    }
+}
+
+function updateStarCounterVisual(nowMs) {
+    if (!starCounterElement) {
+        return;
+    }
+
+    const twinkle = 0.72 + Math.sin(nowMs * 0.0037 + 0.4) * 0.12 + Math.sin(nowMs * 0.0064 + 1.8) * 0.06;
+    const glowLeft = Math.max(0, starCounterGlowUntilMs - nowMs);
+    const glowBoost = glowLeft > 0 ? THREE.MathUtils.clamp(glowLeft / 360, 0, 1) : 0;
+    const opacity = THREE.MathUtils.clamp(twinkle + glowBoost * 0.35, 0.45, 1);
+    starCounterElement.style.opacity = opacity.toFixed(3);
+    starCounterElement.style.boxShadow = `0 0 ${8 + glowBoost * 16}px rgba(124, 188, 255, ${0.12 + glowBoost * 0.32})`;
+    starCounterElement.style.textShadow = `0 0 ${5 + glowBoost * 10}px rgba(206, 234, 255, ${0.24 + glowBoost * 0.42})`;
+}
+
+function updateDualConstellationProgress(nowMs) {
+    if (!dualConstellationActive) {
+        dualConstellationProgress = 0;
+        return;
+    }
+
+    const t = THREE.MathUtils.clamp(
+        (nowMs - dualConstellationActivatedAtMs) / DUAL_CONSTELLATION_SLIDE_MS,
+        0,
+        1
+    );
+    dualConstellationProgress = t * t * (3 - 2 * t);
+}
+
+function incrementSpaceCounter(nowMs = performance.now()) {
+    spaceLaunchCount += 1;
+    starCounterGlowUntilMs = nowMs + 360;
+    updateStarCounterDisplay();
+
+    if (!dualConstellationActive && !companionConstellationLoading && !companionConstellation && spaceLaunchCount >= SPACE_COUNTER_TARGET) {
+        loadCompanionConstellationFromImage(
+            COMPANION_CONSTELLATION_IMAGE_URL,
+            COMPANION_CONSTELLATION_FALLBACK_IMAGE_URL
+        );
+    }
+}
+
+function loadCompanionConstellationFromImage(imageUrl, fallbackUrl = null) {
+    if (companionConstellation || companionConstellationLoading) {
+        return;
+    }
+
+    companionConstellationLoading = true;
+    const image = new Image();
+    image.decoding = "async";
+    image.onload = () => {
+        companionConstellationLoading = false;
+        buildCompanionConstellation(image);
+    };
+    image.onerror = () => {
+        companionConstellationLoading = false;
+        if (fallbackUrl && fallbackUrl !== imageUrl) {
+            console.warn(`${imageUrl} okunamadi, ${fallbackUrl} ile devam ediliyor.`);
+            loadCompanionConstellationFromImage(fallbackUrl, null);
+            return;
+        }
+        console.warn("Companion constellation gorseli yuklenemedi.");
+    };
+    image.src = imageUrl;
+}
+
+function extractConstellationTriples(image) {
+    const scanScale = Math.min(1, CONSTELLATION_SCAN_MAX_WIDTH / image.width);
+    const scanWidth = Math.max(96, Math.floor(image.width * scanScale));
+    const scanHeight = Math.max(64, Math.floor(image.height * scanScale));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = scanWidth;
+    canvas.height = scanHeight;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) {
+        return null;
+    }
+
+    context.drawImage(image, 0, 0, scanWidth, scanHeight);
+    const pixels = context.getImageData(0, 0, scanWidth, scanHeight).data;
+    const pixelCount = scanWidth * scanHeight;
+    const lum = new Float32Array(pixelCount);
+
+    for (let i = 0; i < pixelCount; i += 1) {
+        const p = i * 4;
+        const r = pixels[p];
+        const g = pixels[p + 1];
+        const b = pixels[p + 2];
+        lum[i] = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+    }
+
+    const lumThreshold = luminancePercentile(lum, 0.972);
+    const contrastThreshold = 0.0105;
+    const rawMask = new Uint8Array(pixelCount);
+
+    for (let y = 0; y < scanHeight; y += 1) {
+        const yUp = Math.max(0, y - 1);
+        const yDown = Math.min(scanHeight - 1, y + 1);
+        for (let x = 0; x < scanWidth; x += 1) {
+            const xLeft = Math.max(0, x - 1);
+            const xRight = Math.min(scanWidth - 1, x + 1);
+            const idx = y * scanWidth + x;
+
+            const localCross = (
+                lum[y * scanWidth + xLeft] +
+                lum[y * scanWidth + xRight] +
+                lum[yUp * scanWidth + x] +
+                lum[yDown * scanWidth + x]
+            ) * 0.25;
+            const contrast = lum[idx] - localCross;
+
+            if (lum[idx] >= lumThreshold && contrast >= contrastThreshold) {
+                rawMask[idx] = 1;
+            }
+        }
+    }
+
+    const mask = new Uint8Array(pixelCount);
+    for (let y = 0; y < scanHeight; y += 1) {
+        for (let x = 0; x < scanWidth; x += 1) {
+            const idx = y * scanWidth + x;
+            if (!rawMask[idx]) {
+                continue;
+            }
+            let neighbors = 0;
+            for (let oy = -1; oy <= 1; oy += 1) {
+                const py = y + oy;
+                if (py < 0 || py >= scanHeight) {
+                    continue;
+                }
+                for (let ox = -1; ox <= 1; ox += 1) {
+                    if (ox === 0 && oy === 0) {
+                        continue;
+                    }
+                    const px = x + ox;
+                    if (px < 0 || px >= scanWidth) {
+                        continue;
+                    }
+                    if (rawMask[py * scanWidth + px]) {
+                        neighbors += 1;
+                    }
+                }
+            }
+            if (neighbors >= 1) {
+                mask[idx] = 1;
+            }
+        }
+    }
+
+    const worldWidth = CONSTELLATION_WORLD_WIDTH;
+    const worldHeight = worldWidth * (scanHeight / scanWidth);
+    const dustTriples = [];
+    const nodeTriples = [];
+    const nodeGridX = [];
+    const nodeGridY = [];
+
+    for (let y = 0; y < scanHeight; y += 1) {
+        for (let x = 0; x < scanWidth; x += 1) {
+            const idx = y * scanWidth + x;
+            if (!mask[idx]) {
+                continue;
+            }
+
+            const hash = ((x * 73856093) ^ (y * 19349663) ^ ((x + y) * 83492791)) >>> 0;
+            const brightnessBoost = THREE.MathUtils.clamp((lum[idx] - lumThreshold) * 6.2, 0, 1);
+            const dustChance = THREE.MathUtils.clamp(0.56 + brightnessBoost * 0.34, 0.42, 0.95);
+            if ((hash % 1000) / 1000 > dustChance) {
+                continue;
+            }
+
+            const wx = (x / (scanWidth - 1) - 0.5) * worldWidth;
+            const wy = (0.5 - y / (scanHeight - 1)) * worldHeight;
+            const wz = -190 + (Math.random() - 0.5) * (CONSTELLATION_DEPTH_JITTER * 2);
+            dustTriples.push(wx, wy, wz);
+
+            const nodeChance = THREE.MathUtils.clamp(0.24 + brightnessBoost * 0.46, 0.18, 0.82);
+            if (((hash >>> 11) % 1000) / 1000 <= nodeChance) {
+                nodeTriples.push(
+                    wx + (Math.random() - 0.5) * 1.1,
+                    wy + (Math.random() - 0.5) * 1.1,
+                    wz + (Math.random() - 0.5) * 2.0
+                );
+                nodeGridX.push(wx);
+                nodeGridY.push(wy);
+            }
+        }
+    }
+
+    if (dustTriples.length < 220 || nodeTriples.length < 140) {
+        return null;
+    }
+
+    const nodeCount = Math.floor(nodeTriples.length / 3);
+    const lineTriples = [];
+    const lineTriplesFar = [];
+    const pushLine = (ax, ay, az, bx, by, bz) => {
+        const midpointZ = (az + bz) * 0.5;
+        if (midpointZ < CONSTELLATION_LINE_DEPTH_SPLIT_Z) {
+            lineTriplesFar.push(ax, ay, az, bx, by, bz);
+            return;
+        }
+        lineTriples.push(ax, ay, az, bx, by, bz);
+    };
+    const cellSize = CONSTELLATION_NODE_LINK_DISTANCE;
+    const maxDistSq = cellSize * cellSize;
+    const linkCounts = new Uint8Array(nodeCount);
+    const cellMap = new Map();
+
+    for (let i = 0; i < nodeCount; i += 1) {
+        const x = nodeGridX[i];
+        const y = nodeGridY[i];
+        const cx = Math.floor((x + worldWidth * 0.5) / cellSize);
+        const cy = Math.floor((y + worldHeight * 0.5) / cellSize);
+        const key = `${cx}:${cy}`;
+        if (!cellMap.has(key)) {
+            cellMap.set(key, []);
+        }
+        cellMap.get(key).push(i);
+    }
+
+    for (let i = 0; i < nodeCount; i += 1) {
+        if (linkCounts[i] >= CONSTELLATION_MAX_LINKS_PER_NODE) {
+            continue;
+        }
+
+        const ax = nodeTriples[i * 3];
+        const ay = nodeTriples[i * 3 + 1];
+        const az = nodeTriples[i * 3 + 2];
+        const cx = Math.floor((nodeGridX[i] + worldWidth * 0.5) / cellSize);
+        const cy = Math.floor((nodeGridY[i] + worldHeight * 0.5) / cellSize);
+        const candidates = [];
+
+        for (let oy = -1; oy <= 1; oy += 1) {
+            for (let ox = -1; ox <= 1; ox += 1) {
+                const key = `${cx + ox}:${cy + oy}`;
+                const bucket = cellMap.get(key);
+                if (!bucket) {
+                    continue;
+                }
+                for (let b = 0; b < bucket.length; b += 1) {
+                    const j = bucket[b];
+                    if (j <= i || linkCounts[j] >= CONSTELLATION_MAX_LINKS_PER_NODE) {
+                        continue;
+                    }
+
+                    const bx = nodeTriples[j * 3];
+                    const by = nodeTriples[j * 3 + 1];
+                    const dx = bx - ax;
+                    const dy = by - ay;
+                    const distSq = dx * dx + dy * dy;
+                    if (distSq < 1.2 || distSq > maxDistSq) {
+                        continue;
+                    }
+                    candidates.push([distSq, j]);
+                }
+            }
+        }
+
+        candidates.sort((a, b) => a[0] - b[0]);
+        for (let c = 0; c < candidates.length; c += 1) {
+            if (linkCounts[i] >= CONSTELLATION_MAX_LINKS_PER_NODE) {
+                break;
+            }
+
+            const distSq = candidates[c][0];
+            const j = candidates[c][1];
+            if (linkCounts[j] >= CONSTELLATION_MAX_LINKS_PER_NODE) {
+                continue;
+            }
+
+            const keepChance = THREE.MathUtils.clamp(0.9 - (distSq / maxDistSq) * 0.32, 0.45, 0.92);
+            const pairHash = (((i + 1) * 73856093) ^ ((j + 1) * 19349663)) >>> 0;
+            if ((pairHash % 1000) / 1000 > keepChance) {
+                continue;
+            }
+
+            const bx = nodeTriples[j * 3];
+            const by = nodeTriples[j * 3 + 1];
+            const bz = nodeTriples[j * 3 + 2];
+            pushLine(ax, ay, az, bx, by, bz);
+            linkCounts[i] += 1;
+            linkCounts[j] += 1;
+        }
+    }
+
+    const extendedMaxDistSq = maxDistSq * 2.25;
+    for (let i = 0; i < nodeCount; i += 1) {
+        if (linkCounts[i] > 0) {
+            continue;
+        }
+
+        const ax = nodeTriples[i * 3];
+        const ay = nodeTriples[i * 3 + 1];
+        const az = nodeTriples[i * 3 + 2];
+        let bestJ = -1;
+        let bestDistSq = Infinity;
+
+        for (let j = 0; j < nodeCount; j += 1) {
+            if (j === i || linkCounts[j] >= CONSTELLATION_MAX_LINKS_PER_NODE) {
+                continue;
+            }
+            const bx = nodeTriples[j * 3];
+            const by = nodeTriples[j * 3 + 1];
+            const dx = bx - ax;
+            const dy = by - ay;
+            const distSq = dx * dx + dy * dy;
+            if (distSq < 1.2 || distSq > extendedMaxDistSq) {
+                continue;
+            }
+            if (distSq < bestDistSq) {
+                bestDistSq = distSq;
+                bestJ = j;
+            }
+        }
+
+        if (bestJ >= 0) {
+            const bx = nodeTriples[bestJ * 3];
+            const by = nodeTriples[bestJ * 3 + 1];
+            const bz = nodeTriples[bestJ * 3 + 2];
+            pushLine(ax, ay, az, bx, by, bz);
+            linkCounts[i] += 1;
+            linkCounts[bestJ] += 1;
+        }
+    }
+
+    return {
+        worldWidth,
+        worldHeight,
+        dustTriples,
+        nodeTriples,
+        lineTriples: sortLineTriplesForEntry(lineTriples, 31),
+        lineTriplesFar: sortLineTriplesForEntry(lineTriplesFar, 37)
+    };
+}
+
+function disposeCompanionConstellation() {
+    if (!companionConstellation || !companionConstellation.group) {
+        return;
+    }
+
+    scene.remove(companionConstellation.group);
+    companionConstellation.group.traverse((child) => {
+        if (child.geometry) {
+            child.geometry.dispose();
+        }
+        if (child.material) {
+            child.material.dispose();
+        }
+    });
+    companionConstellation = null;
+}
+
+function buildCompanionConstellation(image) {
+    if (!scene) {
+        return;
+    }
+
+    const triples = extractConstellationTriples(image);
+    if (!triples) {
+        console.warn("Companion constellation verisi olusturulamadi.");
+        return;
+    }
+
+    disposeCompanionConstellation();
+
+    const group = new THREE.Group();
+
+    const dustLive = new Float32Array(triples.dustTriples);
+    const dustGeometry = new THREE.BufferGeometry();
+    dustGeometry.setAttribute("position", new THREE.BufferAttribute(dustLive, 3));
+    const dustMaterial = new THREE.PointsMaterial({
+        color: 0xffffff,
+        size: 1.04,
+        sizeAttenuation: true,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        depthTest: true,
+        blending: THREE.AdditiveBlending
+    });
+    const dustPoints = new THREE.Points(dustGeometry, dustMaterial);
+    dustPoints.renderOrder = 2;
+    group.add(dustPoints);
+
+    const nodeLive = new Float32Array(triples.nodeTriples);
+    const nodeGeometry = new THREE.BufferGeometry();
+    nodeGeometry.setAttribute("position", new THREE.BufferAttribute(nodeLive, 3));
+    const nodeMaterial = new THREE.PointsMaterial({
+        color: 0xe6f2ff,
+        size: 2.16,
+        sizeAttenuation: true,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        depthTest: true,
+        blending: THREE.AdditiveBlending
+    });
+    const nodePoints = new THREE.Points(nodeGeometry, nodeMaterial);
+    nodePoints.renderOrder = 3;
+    group.add(nodePoints);
+
+    let nearLineMaterial = null;
+    let farLineMaterial = null;
+    let nearLinePayload = null;
+    let farLinePayload = null;
+
+    if (triples.lineTriples.length > 0) {
+        const nearLineLive = new Float32Array(triples.lineTriples);
+        const nearLineGeometry = new THREE.BufferGeometry();
+        nearLineGeometry.setAttribute("position", new THREE.BufferAttribute(nearLineLive, 3));
+        nearLineMaterial = new THREE.LineBasicMaterial({
+            color: 0xc7daec,
+            transparent: true,
+            opacity: 0,
+            depthWrite: false,
+            depthTest: true,
+            blending: THREE.NormalBlending
+        });
+        const nearLines = new THREE.LineSegments(nearLineGeometry, nearLineMaterial);
+        nearLines.renderOrder = 1;
+        group.add(nearLines);
+        nearLinePayload = {
+            live: nearLineLive,
+            count: Math.floor(nearLineLive.length / 3),
+            attribute: nearLineGeometry.attributes.position
+        };
+    }
+
+    if (triples.lineTriplesFar.length > 0) {
+        const farLineLive = new Float32Array(triples.lineTriplesFar);
+        const farLineGeometry = new THREE.BufferGeometry();
+        farLineGeometry.setAttribute("position", new THREE.BufferAttribute(farLineLive, 3));
+        farLineMaterial = new THREE.LineBasicMaterial({
+            color: 0xafc3d8,
+            transparent: true,
+            opacity: 0,
+            depthWrite: false,
+            depthTest: true,
+            blending: THREE.NormalBlending
+        });
+        const farLines = new THREE.LineSegments(farLineGeometry, farLineMaterial);
+        farLines.renderOrder = 0;
+        group.add(farLines);
+        farLinePayload = {
+            live: farLineLive,
+            count: Math.floor(farLineLive.length / 3),
+            attribute: farLineGeometry.attributes.position
+        };
+    }
+
+    const mouthLocalX = (CONSTELLATION_MOUTH_U - 0.5) * triples.worldWidth;
+    const mouthLocalY = (0.5 - CONSTELLATION_MOUTH_V) * triples.worldHeight;
+
+    companionConstellationBasePosition.set(
+        CONSTELLATION_MOUTH_TARGET_X - mouthLocalX * CONSTELLATION_SCALE,
+        CONSTELLATION_MOUTH_TARGET_Y - mouthLocalY * CONSTELLATION_SCALE,
+        CONSTELLATION_TARGET_Z
+    );
+
+    group.scale.set(CONSTELLATION_SCALE, CONSTELLATION_SCALE, 1);
+    group.position.copy(companionConstellationBasePosition);
+    group.rotation.x = -0.02;
+    group.rotation.z = -0.006;
+
+    companionConstellation = {
+        group,
+        readyAtMs: performance.now(),
+        dustMaterial,
+        nodeMaterial,
+        nearLineMaterial,
+        farLineMaterial,
+        dustPayload: {
+            live: dustLive,
+            count: Math.floor(dustLive.length / 3),
+            attribute: dustGeometry.attributes.position
+        },
+        nodePayload: {
+            live: nodeLive,
+            count: Math.floor(nodeLive.length / 3),
+            attribute: nodeGeometry.attributes.position
+        },
+        nearLinePayload,
+        farLinePayload
+    };
+
+    scene.add(group);
+    dualConstellationActive = true;
+    dualConstellationActivatedAtMs = performance.now();
+}
+
+function updateCompanionConstellation(nowMs, delta = 1) {
+    if (!companionConstellation || !companionConstellation.group) {
+        return;
+    }
+
+    const fadeProgress = THREE.MathUtils.clamp(
+        (nowMs - companionConstellation.readyAtMs) / COMPANION_CONSTELLATION_FADE_MS,
+        0,
+        1
+    );
+    const collapse = singularityCollapse;
+    const collapseVisibility = Math.max(0, 1 - collapse * 0.995);
+    const powerBoost = 1 + blackHolePower * CONSTELLATION_VISIBILITY_POWER_MULT;
+    const pulse = 0.92 + Math.sin(nowMs * 0.0019 + 0.7) * 0.06 + Math.sin(nowMs * 0.0035 + 1.8) * 0.03;
+    const visibilityBoost = CONSTELLATION_VISIBILITY_MULT * powerBoost * collapseVisibility;
+
+    companionConstellation.dustMaterial.opacity = Math.min(
+        0.23,
+        (0.043 + pulse * 0.013) * fadeProgress * visibilityBoost * CONSTELLATION_DUST_OPACITY_MULT
+    );
+    companionConstellation.nodeMaterial.opacity = Math.min(
+        0.42,
+        (0.11 + pulse * 0.026) * fadeProgress * visibilityBoost * CONSTELLATION_NODE_OPACITY_MULT
+    );
+
+    const nearLineOpacity = Math.min(
+        0.22,
+        (0.048 + pulse * 0.014) * fadeProgress * visibilityBoost * CONSTELLATION_LINE_OPACITY_MULT
+    );
+    if (companionConstellation.nearLineMaterial) {
+        companionConstellation.nearLineMaterial.opacity = nearLineOpacity;
+    }
+    if (companionConstellation.farLineMaterial) {
+        companionConstellation.farLineMaterial.opacity = nearLineOpacity * CONSTELLATION_FAR_LINE_OPACITY_MULT;
+    }
+
+    const splitOffsetX = dualConstellationProgress * DUAL_CONSTELLATION_SPLIT_X;
+    const companionBaseX = companionConstellationBasePosition.x - splitOffsetX;
+    companionConstellation.group.position.set(
+        companionBaseX,
+        companionConstellationBasePosition.y,
+        companionConstellationBasePosition.z
+    );
+    companionConstellation.group.scale.set(CONSTELLATION_SCALE, CONSTELLATION_SCALE, 1);
+    companionConstellation.group.rotation.x = -0.02;
+    companionConstellation.group.rotation.z = -0.006;
+
+    if (collapse > 0.0001) {
+        pointerAtZ(companionConstellationBasePosition.z, singularityVectorB);
+        const sinkLocalX = (singularityVectorB.x - companionBaseX) / CONSTELLATION_SCALE;
+        const sinkLocalY = (singularityVectorB.y - companionConstellationBasePosition.y) / CONSTELLATION_SCALE;
+        pullConstellationPayload(companionConstellation.dustPayload, sinkLocalX, sinkLocalY, collapse, delta);
+        pullConstellationPayload(companionConstellation.nodePayload, sinkLocalX, sinkLocalY, collapse, delta);
+        pullConstellationPayload(companionConstellation.nearLinePayload, sinkLocalX, sinkLocalY, collapse, delta);
+        pullConstellationPayload(companionConstellation.farLinePayload, sinkLocalX, sinkLocalY, collapse, delta);
+    }
+}
+
 function init() {
     const container = document.getElementById("container");
     if (!container) {
@@ -818,6 +1444,7 @@ function init() {
     console.info("[husoyayazar] build", BUILD_ID);
 
     resolvePerformanceProfile();
+    createStarCounterUI();
     loadConstellationFromImage("husospace.png");
     createStars();
     createDeepStars();
@@ -866,9 +1493,14 @@ function bindEvents() {
     window.addEventListener("keydown", (event) => {
         if (event.code === "Space" || event.key === " " || event.key === "Spacebar") {
             event.preventDefault();
-            registerUserActivity(performance.now());
+            if (event.repeat) {
+                return;
+            }
+            const now = performance.now();
+            registerUserActivity(now);
             blackHolePulse = Math.max(blackHolePulse, 11);
             spawnFoodFromBlackHole();
+            incrementSpaceCounter(now);
         }
     });
 }
@@ -3075,15 +3707,20 @@ function updateConstellation(nowMs, delta = 1) {
         );
     }
 
-    constellationGroup.position.copy(constellationBasePosition);
+    const splitOffsetX = dualConstellationProgress * DUAL_CONSTELLATION_SPLIT_X;
+    const primaryBaseX = constellationBasePosition.x + splitOffsetX;
+    const primaryBaseY = constellationBasePosition.y;
+    const primaryBaseZ = constellationBasePosition.z;
+
+    constellationGroup.position.set(primaryBaseX, primaryBaseY, primaryBaseZ);
     constellationGroup.scale.set(CONSTELLATION_SCALE, CONSTELLATION_SCALE, 1);
     constellationGroup.rotation.x = -0.02;
     constellationGroup.rotation.z = -0.006;
 
     if (collapse > 0.0001 && constellationEntryState) {
-        pointerAtZ(constellationBasePosition.z, singularityVectorB);
-        const sinkLocalX = (singularityVectorB.x - constellationBasePosition.x) / CONSTELLATION_SCALE;
-        const sinkLocalY = (singularityVectorB.y - constellationBasePosition.y) / CONSTELLATION_SCALE;
+        pointerAtZ(primaryBaseZ, singularityVectorB);
+        const sinkLocalX = (singularityVectorB.x - primaryBaseX) / CONSTELLATION_SCALE;
+        const sinkLocalY = (singularityVectorB.y - primaryBaseY) / CONSTELLATION_SCALE;
 
         pullConstellationPayload(constellationEntryState.dust, sinkLocalX, sinkLocalY, collapse, delta);
         pullConstellationPayload(constellationEntryState.nodes, sinkLocalX, sinkLocalY, collapse, delta);
@@ -3098,6 +3735,8 @@ function animate(nowMs = performance.now()) {
     const frameDeltaMs = nowMs - lastFrameMs;
     lastFrameMs = nowMs;
     const delta = Math.min(frameDeltaMs / 16.666, 2.4);
+    updateDualConstellationProgress(nowMs);
+    updateStarCounterVisual(nowMs);
 
     updateBlackHole(delta, nowMs);
 
@@ -3125,6 +3764,7 @@ function animate(nowMs = performance.now()) {
     updateStars(delta, nowMs);
     updateFoodMeshes(delta, nowMs);
     updateConstellation(nowMs, delta);
+    updateCompanionConstellation(nowMs, delta);
 
     renderer.render(scene, camera);
 }
