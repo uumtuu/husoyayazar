@@ -2837,6 +2837,7 @@ function updateStars(delta, nowMs) {
 
 function updateFoodMeshes(delta) {
     const collapse = singularityCollapse;
+    const collapseEase = collapse * collapse;
     const hasCollapse = collapse > 0.0001;
     const hasInfluence = blackHoleRadius > 0.5 || hasCollapse;
 
