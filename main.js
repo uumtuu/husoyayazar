@@ -17,7 +17,7 @@ const foods = [
     "ıslak hamburger"
 ];
 
-const BUILD_ID = "20260219-constellation-v33-dot-matrix-counter";
+const BUILD_ID = "20260219-constellation-v35-righttop-star-counter";
 
 const BASE_STAR_COUNT = 22000;
 const MIN_STAR_COUNT = 7000;
@@ -95,6 +95,10 @@ const STAR_COUNTER_VOID_CANVAS_HEIGHT = 1080;
 const STAR_COUNTER_LINE_WIDTH = 12;
 const STAR_COUNTER_GLOW_WIDTH = 26;
 const STAR_COUNTER_PULSE_MS = 620;
+const STAR_COUNTER_POINT_SIZE = 0.34;
+const STAR_COUNTER_GLOW_POINT_SIZE = 0.68;
+const STAR_COUNTER_NORMAL_HEIGHT = 3.1;
+const STAR_COUNTER_VOID_HEIGHT = 4.2;
 const BLACKOUT_COUNTDOWN_DELAY_MS = 2000;
 const BLACKOUT_COUNTDOWN_TOTAL_MS = 10000;
 const BIG_BANG_FLASH_MS = 2100;
@@ -504,6 +508,13 @@ function setStarMaterialOpacity(target, opacity) {
         return;
     }
     target.material.opacity = opacity;
+}
+
+function getConstellationCollapseVisibility(collapse) {
+    if (collapse <= 0.76) {
+        return 1;
+    }
+    return THREE.MathUtils.clamp(1 - (collapse - 0.76) * 4.2, 0.12, 1);
 }
 
 function getEntrySideVector(x, y) {
@@ -1193,18 +1204,47 @@ function seedCounterPointFromScene(index3, tx, ty, tz, voidMode) {
         return;
     }
 
-    const useDeep = hasDeepStars && (!hasNearStars || Math.random() < 0.34);
+    const pickLocalStar = (deepField) => {
+        const count = deepField ? deepStarCount : starCount;
+        const positions = deepField ? deepStarPositions : starPositions;
+        if (!positions || count <= 0) {
+            return -1;
+        }
+
+        let bestIndex = Math.floor(Math.random() * count);
+        let bestScore = Infinity;
+        const attempts = deepField ? 14 : 20;
+
+        for (let i = 0; i < attempts; i += 1) {
+            const idx = Math.floor(Math.random() * count);
+            const idx3 = idx * 3;
+            const z = positions[idx3 + 2];
+            const { halfWidth, halfHeight } = getPlaneHalfExtentsAtZ(z);
+            const targetWorldX = camera.position.x + halfWidth - STAR_COUNTER_MARGIN_X;
+            const targetWorldY = camera.position.y + halfHeight - STAR_COUNTER_MARGIN_Y;
+            const dx = positions[idx3] - targetWorldX;
+            const dy = positions[idx3 + 1] - targetWorldY;
+            const score = dx * dx + dy * dy;
+            if (score < bestScore) {
+                bestScore = score;
+                bestIndex = idx;
+            }
+        }
+        return bestIndex;
+    };
+
+    const useDeep = hasDeepStars && (!hasNearStars || Math.random() < 0.3);
     if (useDeep) {
-        const starIndex = Math.floor(Math.random() * deepStarCount);
-        const sourceIndex3 = starIndex * 3;
+        const starIndex = pickLocalStar(true);
+        const sourceIndex3 = Math.max(0, starIndex) * 3;
         counterSourceWorld.set(
             deepStarPositions[sourceIndex3],
             deepStarPositions[sourceIndex3 + 1],
             deepStarPositions[sourceIndex3 + 2]
         );
     } else {
-        const starIndex = Math.floor(Math.random() * starCount);
-        const sourceIndex3 = starIndex * 3;
+        const starIndex = pickLocalStar(false);
+        const sourceIndex3 = Math.max(0, starIndex) * 3;
         counterSourceWorld.set(
             starPositions[sourceIndex3],
             starPositions[sourceIndex3 + 1],
@@ -1401,40 +1441,56 @@ function createStarCounterUI() {
         return;
     }
 
-    ensureCounterCanvas(false);
-    if (!starCounterCanvas || !starCounterContext) {
-        return;
+    const group = new THREE.Group();
+    starCounterPositions = new Float32Array(STAR_COUNTER_MAX_POINTS * 3);
+    starCounterTargetPositions = new Float32Array(STAR_COUNTER_MAX_POINTS * 3);
+    starCounterColors = new Float32Array(STAR_COUNTER_MAX_POINTS * 3);
+    starCounterPhases = new Float32Array(STAR_COUNTER_MAX_POINTS);
+    starCounterBaseIntensity = new Float32Array(STAR_COUNTER_MAX_POINTS);
+    for (let i = 0; i < STAR_COUNTER_MAX_POINTS; i += 1) {
+        const index3 = i * 3;
+        starCounterPositions[index3] = THREE.MathUtils.randFloatSpread(2);
+        starCounterPositions[index3 + 1] = THREE.MathUtils.randFloatSpread(2);
+        starCounterPositions[index3 + 2] = THREE.MathUtils.randFloatSpread(0.6);
+        starCounterTargetPositions[index3] = starCounterPositions[index3];
+        starCounterTargetPositions[index3 + 1] = starCounterPositions[index3 + 1];
+        starCounterTargetPositions[index3 + 2] = starCounterPositions[index3 + 2];
+        starCounterColors[index3] = 0;
+        starCounterColors[index3 + 1] = 0;
+        starCounterColors[index3 + 2] = 0;
+        starCounterPhases[i] = Math.random() * Math.PI * 2;
+        starCounterBaseIntensity[i] = 0.6 + Math.random() * 0.4;
     }
 
-    starCounterTexture = new THREE.CanvasTexture(starCounterCanvas);
-    starCounterTexture.minFilter = THREE.LinearFilter;
-    starCounterTexture.magFilter = THREE.LinearFilter;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(starCounterPositions, 3));
+    geometry.setAttribute("color", new THREE.BufferAttribute(starCounterColors, 3));
+    geometry.setDrawRange(0, 0);
+    starCounterGeometry = geometry;
 
-    const group = new THREE.Group();
-    starCounterGeometry = new THREE.PlaneGeometry(1, 1);
-
-    const glowMaterial = new THREE.MeshBasicMaterial({
-        map: starCounterTexture,
+    const glowMaterial = new THREE.PointsMaterial({
+        size: STAR_COUNTER_GLOW_POINT_SIZE,
         transparent: true,
         opacity: 0.44,
         depthWrite: false,
         depthTest: false,
-        blending: THREE.AdditiveBlending
+        blending: THREE.AdditiveBlending,
+        vertexColors: true
     });
-    starCounterGlowMesh = new THREE.Mesh(starCounterGeometry.clone(), glowMaterial);
+    starCounterGlowMesh = new THREE.Points(geometry, glowMaterial);
     starCounterGlowMesh.renderOrder = 1249;
-    starCounterGlowMesh.scale.set(1.08, 1.08, 1);
     group.add(starCounterGlowMesh);
 
-    const coreMaterial = new THREE.MeshBasicMaterial({
-        map: starCounterTexture,
+    const coreMaterial = new THREE.PointsMaterial({
+        size: STAR_COUNTER_POINT_SIZE,
         transparent: true,
-        opacity: 0.92,
+        opacity: 0.95,
         depthWrite: false,
         depthTest: false,
-        blending: THREE.AdditiveBlending
+        blending: THREE.AdditiveBlending,
+        vertexColors: true
     });
-    starCounterPoints = new THREE.Mesh(starCounterGeometry, coreMaterial);
+    starCounterPoints = new THREE.Points(geometry, coreMaterial);
     starCounterPoints.renderOrder = 1250;
     group.add(starCounterPoints);
 
@@ -1446,7 +1502,7 @@ function createStarCounterUI() {
 }
 
 function updateStarCounterDisplay() {
-    if (!starCounterTexture) {
+    if (!starCounterGeometry || !starCounterPositions || !starCounterTargetPositions) {
         return;
     }
 
@@ -1460,8 +1516,36 @@ function updateStarCounterDisplay() {
         return;
     }
 
-    drawCounterSevenSegmentCanvas(value, counterVoidMode, counterStyleVariant);
-    starCounterTexture.needsUpdate = true;
+    let triples = buildStarCounterTargetTriples(value, counterVoidMode);
+    if (counterStyleVariant >= 0 || counterVoidMode) {
+        triples = applyCounterConstellationStyle(triples, counterStyleVariant, counterVoidMode);
+    }
+
+    const count = Math.max(1, Math.floor(triples.length / 3));
+    const previousCount = starCounterPointCount;
+    starCounterPointCount = count;
+    starCounterGeometry.setDrawRange(0, count);
+
+    for (let i = 0; i < count; i += 1) {
+        const index3 = i * 3;
+        const tx = triples[index3];
+        const ty = triples[index3 + 1];
+        const tz = triples[index3 + 2];
+        starCounterTargetPositions[index3] = tx;
+        starCounterTargetPositions[index3 + 1] = ty;
+        starCounterTargetPositions[index3 + 2] = tz;
+
+        seedCounterPointFromScene(index3, tx, ty, tz, counterVoidMode);
+        starCounterPhases[i] = Math.random() * Math.PI * 2;
+        starCounterBaseIntensity[i] = 0.55 + Math.random() * 0.45;
+    }
+
+    for (let i = count; i < previousCount; i += 1) {
+        const index3 = i * 3;
+        starCounterColors[index3] = 0;
+        starCounterColors[index3 + 1] = 0;
+        starCounterColors[index3 + 2] = 0;
+    }
 
     starCounterTransitionStartedMs = performance.now();
     starCounterTransitionUntilMs = starCounterTransitionStartedMs + STAR_COUNTER_PULSE_MS;
@@ -1469,13 +1553,12 @@ function updateStarCounterDisplay() {
 }
 
 function updateStarCounterVisual(nowMs) {
-    if (!starCounterGroup || !starCounterPoints || !starCounterTexture || !camera) {
+    if (!starCounterGroup || !starCounterPoints || !starCounterGeometry || !camera) {
         return;
     }
     starCounterGroup.visible = true;
 
     const { halfWidth, halfHeight } = getPlaneHalfExtentsAtZ(STAR_COUNTER_WORLD_Z);
-    const blackout = isSingularityBlackout();
     starCounterGroup.position.set(
         camera.position.x + halfWidth - STAR_COUNTER_MARGIN_X,
         camera.position.y + halfHeight - STAR_COUNTER_MARGIN_Y,
@@ -1483,25 +1566,10 @@ function updateStarCounterVisual(nowMs) {
     );
     starCounterGroup.quaternion.copy(camera.quaternion);
 
-    const textureAspect = starCounterCanvas
-        ? (starCounterCanvas.width / Math.max(1, starCounterCanvas.height))
-        : 2.8;
-
-    let widthUnits;
-    let heightUnits;
-    heightUnits = 2.7;
-    widthUnits = heightUnits * textureAspect;
-
-    if (singularityCollapse > 0.0001 && !blackout) {
-        pointerAtZ(STAR_COUNTER_WORLD_Z, singularityVectorA);
-        const pullLerp = THREE.MathUtils.clamp(0.02 + singularityCollapse * 0.24, 0, 0.5);
-        starCounterGroup.position.lerp(singularityVectorA, pullLerp);
-        const shrink = THREE.MathUtils.clamp(1 - singularityCollapse * 0.72, 0.2, 1);
-        widthUnits *= shrink;
-        heightUnits *= shrink;
-    }
-
-    starCounterGroup.scale.set(widthUnits, heightUnits, 1);
+    const glyphSize = getCounterGlyphSize(starCounterDisplayText, counterVoidMode);
+    const targetHeight = counterVoidMode ? STAR_COUNTER_VOID_HEIGHT : STAR_COUNTER_NORMAL_HEIGHT;
+    const scale = targetHeight / Math.max(0.001, glyphSize.height);
+    starCounterGroup.scale.set(scale, scale, 1);
 
     const transitionDuration = Math.max(1, starCounterTransitionUntilMs - starCounterTransitionStartedMs);
     const transitionProgress = THREE.MathUtils.clamp(
@@ -1509,15 +1577,49 @@ function updateStarCounterVisual(nowMs) {
         0,
         1
     );
+    const eased = transitionProgress * transitionProgress * (3 - 2 * transitionProgress);
+    const moveLerp = 0.12 + eased * 0.22;
+
+    const warmUnlock = Number(starCounterDisplayText) >= SPACE_COUNTER_TARGET;
+    const baseR = warmUnlock ? 1.0 : 0.86;
+    const baseG = warmUnlock ? 0.93 : 0.9;
+    const baseB = warmUnlock ? 0.78 : 1.0;
+
+    for (let i = 0; i < starCounterPointCount; i += 1) {
+        const index3 = i * 3;
+        starCounterPositions[index3] = THREE.MathUtils.lerp(
+            starCounterPositions[index3],
+            starCounterTargetPositions[index3],
+            moveLerp
+        );
+        starCounterPositions[index3 + 1] = THREE.MathUtils.lerp(
+            starCounterPositions[index3 + 1],
+            starCounterTargetPositions[index3 + 1],
+            moveLerp
+        );
+        starCounterPositions[index3 + 2] = THREE.MathUtils.lerp(
+            starCounterPositions[index3 + 2],
+            starCounterTargetPositions[index3 + 2],
+            moveLerp
+        );
+
+        const twinkle = 0.82 + Math.sin(nowMs * STAR_COUNTER_TWINKLE_SPEED + starCounterPhases[i]) * 0.18;
+        const intensity = starCounterBaseIntensity[i] * twinkle;
+        starCounterColors[index3] = THREE.MathUtils.clamp(baseR * intensity, 0, 1);
+        starCounterColors[index3 + 1] = THREE.MathUtils.clamp(baseG * intensity, 0, 1);
+        starCounterColors[index3 + 2] = THREE.MathUtils.clamp(baseB * intensity, 0, 1);
+    }
     const pulse = 1 + Math.pow(1 - transitionProgress, 2) * 0.14;
     const flicker = 0.88 + Math.sin(nowMs * 0.0047 + 0.31) * 0.08 + Math.sin(nowMs * 0.0072 + 1.41) * 0.06;
     const glowLeft = Math.max(0, starCounterGlowUntilMs - nowMs);
     const glowBoost = glowLeft > 0 ? THREE.MathUtils.clamp(glowLeft / 360, 0, 1) : 0;
-    const collapseDamp = blackout ? 1 : (1 - singularityCollapse * 0.58);
+    const collapseDamp = 1 - singularityCollapse * 0.32;
     const baseOpacity = counterVoidMode ? 0.96 : 0.88;
     const coreOpacity = THREE.MathUtils.clamp(baseOpacity * flicker * pulse * collapseDamp + glowBoost * 0.15, 0.26, 1);
     const glowOpacity = THREE.MathUtils.clamp((0.36 + glowBoost * 0.42) * flicker * collapseDamp, 0.14, 0.92);
 
+    starCounterGeometry.attributes.position.needsUpdate = true;
+    starCounterGeometry.attributes.color.needsUpdate = true;
     starCounterPoints.material.opacity = coreOpacity;
     if (starCounterGlowMesh && starCounterGlowMesh.material) {
         starCounterGlowMesh.material.opacity = glowOpacity;
@@ -2513,7 +2615,7 @@ function updateCompanionConstellation(nowMs, delta = 1) {
         1
     );
     const collapse = singularityCollapse;
-    const collapseVisibility = Math.max(0, 1 - collapse * 0.995);
+    const collapseVisibility = getConstellationCollapseVisibility(collapse);
     const powerBoost = 1 + blackHolePower * CONSTELLATION_VISIBILITY_POWER_MULT;
     const pulse = 0.92 + Math.sin(nowMs * 0.0019 + 0.7) * 0.06 + Math.sin(nowMs * 0.0035 + 1.8) * 0.03;
     const drawFlash = 1 + (1 - drawProgress) * 0.9;
@@ -5208,7 +5310,7 @@ function updateConstellation(nowMs, delta = 1) {
     const sparkleBoost = getConstellationSparkleBoost(nowMs);
     const powerBoost = 1 + blackHolePower * CONSTELLATION_VISIBILITY_POWER_MULT;
     const collapse = singularityCollapse;
-    const collapseVisibility = Math.max(0, 1 - collapse * 0.995);
+    const collapseVisibility = getConstellationCollapseVisibility(collapse);
     const dualBoost = dualConstellationActive ? 1.55 : 1;
     const visibilityBoost =
         CONSTELLATION_VISIBILITY_MULT * powerBoost * entryFlash * sparkleBoost * collapseVisibility * dualBoost;
