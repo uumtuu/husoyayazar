@@ -17,7 +17,7 @@ const foods = [
     "ıslak hamburger"
 ];
 
-const BUILD_ID = "20260219-constellation-v25-manual-void-countdown";
+const BUILD_ID = "20260219-constellation-v26-blackout-auto-countdown-bigbang";
 
 const BASE_STAR_COUNT = 22000;
 const MIN_STAR_COUNT = 7000;
@@ -88,7 +88,11 @@ const STAR_COUNTER_DIGIT_HEIGHT = 15.8;
 const STAR_COUNTER_DIGIT_GAP = 2.8;
 const STAR_COUNTER_SEGMENT_POINT_STEP = 0.52;
 const STAR_COUNTER_VOID_SCALE = 2.28;
-const BIG_BANG_FLASH_MS = 1700;
+const BLACKOUT_COUNTDOWN_DELAY_MS = 2000;
+const BLACKOUT_COUNTDOWN_TOTAL_MS = 10000;
+const BIG_BANG_FLASH_MS = 2100;
+const BIG_BANG_RING_EXPAND_MS = 2800;
+const BIG_BANG_RECOVERY_MS = 3200;
 const BIG_BANG_STAR_BURST_MIN = 2.4;
 const BIG_BANG_STAR_BURST_MAX = 8.8;
 const BIG_BANG_DEEP_BURST_MIN = 1.2;
@@ -233,6 +237,7 @@ let blackHoleAccretionInnerDisk;
 let blackHolePhotonRing;
 let singularityOverlay;
 let bigBangFlash;
+let bigBangRing;
 let blackHoleRadius = MIN_BLACKHOLE_RADIUS;
 let blackHolePulse = 0;
 let blackHolePower = 0;
@@ -303,9 +308,13 @@ let starCounterTransitionUntilMs = 0;
 let starCounterLastSignature = "";
 let starCounterGlowUntilMs = 0;
 let starCounterDisplayText = "0";
+let counterDisplayOverrideValue = null;
+let counterStyleVariant = -1;
 let counterVoidMode = false;
-let voidCounterPrimed = false;
-let lastBlackoutSpacePressMs = 0;
+let blackoutCountdownArmedAtMs = 0;
+let blackoutCountdownStartedAtMs = 0;
+let blackoutCountdownActive = false;
+let blackoutCountdownLastSecond = -1;
 let bigBangState = null;
 let dualConstellationActive = false;
 let dualConstellationActivatedAtMs = 0;
@@ -986,6 +995,54 @@ function buildStarCounterTargetTriples(valueText, voidMode) {
     return sampled;
 }
 
+function applyCounterConstellationStyle(triples, styleVariant, voidMode) {
+    if (!voidMode || styleVariant < 0 || triples.length === 0) {
+        return triples;
+    }
+
+    const styleSeed = (styleVariant + 1) * 0.73;
+    const swirlFreq = 0.16 + (styleVariant % 5) * 0.05;
+    const warpFreq = 0.22 + (styleVariant % 7) * 0.037;
+    const swirlAmp = 0.12 + (styleVariant % 4) * 0.05;
+    const warpAmp = 0.2 + ((styleVariant + 2) % 6) * 0.03;
+
+    for (let i = 0; i < triples.length; i += 3) {
+        const x = triples[i];
+        const y = triples[i + 1];
+        const radius = Math.hypot(x, y) + 0.0001;
+        const angle = Math.atan2(y, x);
+        const styleWave = Math.sin(radius * swirlFreq + angle * warpFreq + styleSeed);
+        const styleSpoke = Math.cos(angle * (1.6 + styleVariant * 0.11) + radius * 0.08 + styleSeed * 1.7);
+
+        triples[i] = x + Math.cos(angle + styleWave) * swirlAmp + styleSpoke * warpAmp * 0.22;
+        triples[i + 1] = y + Math.sin(angle - styleWave) * swirlAmp + styleWave * warpAmp * 0.22;
+        triples[i + 2] += Math.sin(radius * 0.09 + styleSeed) * 0.12;
+    }
+
+    // Add a compact, style-dependent mini-constellation aura so each countdown
+    // second has a visibly different stellar signature.
+    const auraCount = 3 + (styleVariant % 3);
+    const auraRadius = 5.2 + styleVariant * 0.23;
+    for (let aura = 0; aura < auraCount; aura += 1) {
+        const baseAngle = (Math.PI * 2 * aura) / auraCount + styleSeed;
+        const cx = Math.cos(baseAngle) * auraRadius;
+        const cy = Math.sin(baseAngle) * auraRadius;
+        let px = cx;
+        let py = cy;
+        const segmentCount = 3 + ((styleVariant + aura) % 3);
+        for (let s = 0; s < segmentCount; s += 1) {
+            const turn = styleSeed * 0.9 + s * (0.7 + styleVariant * 0.02);
+            const nx = cx + Math.cos(turn) * (0.9 + s * 0.45);
+            const ny = cy + Math.sin(turn * 1.07) * (0.75 + s * 0.38);
+            appendCounterSegmentPoints(triples, px, py, nx, ny, true);
+            px = nx;
+            py = ny;
+        }
+    }
+
+    return triples;
+}
+
 function getCounterGlyphSize(valueText, voidMode) {
     const scale = voidMode ? STAR_COUNTER_VOID_SCALE : 1;
     const text = String(valueText && valueText.length ? valueText : "0");
@@ -1103,11 +1160,18 @@ function updateStarCounterDisplay() {
         return;
     }
 
-    const value = String(Math.max(0, spaceLaunchCount));
+    const rawValue = counterDisplayOverrideValue === null
+        ? Math.max(0, spaceLaunchCount)
+        : Math.max(0, counterDisplayOverrideValue);
+    const value = String(rawValue);
     starCounterDisplayText = value;
-    const signature = `${counterVoidMode ? "V" : "N"}:${value}`;
+    const signature = `${counterVoidMode ? "V" : "N"}:${value}:S${counterStyleVariant}`;
     const signatureChanged = signature !== starCounterLastSignature;
-    const targetTriples = buildStarCounterTargetTriples(value, counterVoidMode);
+    const targetTriples = applyCounterConstellationStyle(
+        buildStarCounterTargetTriples(value, counterVoidMode),
+        counterStyleVariant,
+        counterVoidMode
+    );
     const nextCount = Math.min(STAR_COUNTER_MAX_POINTS, Math.floor(targetTriples.length / 3));
     const oldCount = starCounterPointCount;
 
@@ -1194,7 +1258,10 @@ function updateStarCounterVisual(nowMs) {
     const twinkle = 0.74 + Math.sin(nowMs * 0.0039 + 0.4) * 0.12 + Math.sin(nowMs * 0.0066 + 1.8) * 0.06;
     const glowLeft = Math.max(0, starCounterGlowUntilMs - nowMs);
     const glowBoost = glowLeft > 0 ? THREE.MathUtils.clamp(glowLeft / 360, 0, 1) : 0;
-    const warmUnlock = spaceLaunchCount >= SPACE_COUNTER_TARGET ? 1 : 0;
+    const liveCounterValue = counterDisplayOverrideValue === null ? spaceLaunchCount : counterDisplayOverrideValue;
+    const warmUnlock = liveCounterValue >= SPACE_COUNTER_TARGET ? 1 : 0;
+    const styleMotion = counterStyleVariant >= 0 ? (0.05 + (counterStyleVariant % 5) * 0.012) : 0;
+    const styleHueShift = counterStyleVariant >= 0 ? ((counterStyleVariant % 11) / 11) : 0;
 
     for (let i = 0; i < starCounterPointCount; i += 1) {
         const index3 = i * 3;
@@ -1206,6 +1273,14 @@ function updateStarCounterVisual(nowMs) {
         starCounterPositions[index3 + 1] = THREE.MathUtils.lerp(starCounterPositions[index3 + 1], ty, settle);
         starCounterPositions[index3 + 2] = THREE.MathUtils.lerp(starCounterPositions[index3 + 2], tz, settle * 0.92);
 
+        if (styleMotion > 0) {
+            const motionPhase = nowMs * (0.0012 + counterStyleVariant * 0.00006) + starCounterPhases[i] * 1.7;
+            const flowX = Math.sin(motionPhase + ty * 0.42) * styleMotion;
+            const flowY = Math.cos(motionPhase * 1.03 + tx * 0.38) * styleMotion;
+            starCounterPositions[index3] += flowX;
+            starCounterPositions[index3 + 1] += flowY;
+        }
+
         const phase = starCounterPhases[i] + nowMs * STAR_COUNTER_TWINKLE_SPEED;
         const sparkle = 0.76 + Math.sin(phase) * 0.18;
         const brightness = THREE.MathUtils.clamp(
@@ -1214,9 +1289,9 @@ function updateStarCounterVisual(nowMs) {
             1.25
         );
 
-        const baseR = 0.82 + warmUnlock * 0.16;
-        const baseG = 0.9 + warmUnlock * 0.03;
-        const baseB = 1 - warmUnlock * 0.24;
+        const baseR = 0.78 + warmUnlock * 0.16 + styleHueShift * 0.18;
+        const baseG = 0.86 + warmUnlock * 0.05 - styleHueShift * 0.08;
+        const baseB = 0.96 - warmUnlock * 0.22 + (1 - styleHueShift) * 0.08;
         starCounterColors[index3] = THREE.MathUtils.clamp(baseR * brightness, 0, 1);
         starCounterColors[index3 + 1] = THREE.MathUtils.clamp(baseG * brightness, 0, 1);
         starCounterColors[index3 + 2] = THREE.MathUtils.clamp(baseB * brightness, 0, 1);
@@ -1249,41 +1324,49 @@ function setCounterVoidMode(active) {
 }
 
 function isSingularityBlackout() {
-    if (singularityCollapse >= 0.92) {
+    if (singularityCollapse >= 0.86) {
         return true;
     }
-    if (singularityOverlay && singularityOverlay.material && singularityOverlay.material.opacity >= 0.95) {
+    if (singularityOverlay && singularityOverlay.material && singularityOverlay.material.opacity >= 0.88) {
         return true;
     }
     return false;
 }
 
-function cancelVoidCountdown() {
-    voidCounterPrimed = false;
-    lastBlackoutSpacePressMs = 0;
+function setCounterDisplayOverride(value, styleVariant = -1) {
+    if (counterDisplayOverrideValue === value && counterStyleVariant === styleVariant) {
+        return;
+    }
+    counterDisplayOverrideValue = value;
+    counterStyleVariant = styleVariant;
+    updateStarCounterDisplay();
 }
 
-function handleBlackoutSpacePress(nowMs = performance.now()) {
-    if (!isSingularityBlackout()) {
-        return false;
+function clearCounterDisplayOverride() {
+    if (counterDisplayOverrideValue === null && counterStyleVariant === -1) {
+        return;
     }
-
-    setCounterVoidMode(true);
-    voidCounterPrimed = true;
-    lastBlackoutSpacePressMs = nowMs;
-
-    if (spaceLaunchCount <= 0) {
-        return true;
-    }
-
-    spaceLaunchCount = Math.max(0, spaceLaunchCount - 1);
-    starCounterGlowUntilMs = nowMs + 220;
+    counterDisplayOverrideValue = null;
+    counterStyleVariant = -1;
     updateStarCounterDisplay();
+}
 
-    if (spaceLaunchCount <= 0) {
-        triggerBigBang(nowMs);
+function resetBlackoutCountdownState(clearDisplay = false) {
+    blackoutCountdownArmedAtMs = 0;
+    blackoutCountdownStartedAtMs = 0;
+    blackoutCountdownActive = false;
+    blackoutCountdownLastSecond = -1;
+    if (clearDisplay) {
+        clearCounterDisplayOverride();
     }
-    return true;
+}
+
+function startBlackoutCountdown(nowMs = performance.now()) {
+    blackoutCountdownActive = true;
+    blackoutCountdownStartedAtMs = nowMs;
+    blackoutCountdownLastSecond = -1;
+    setCounterDisplayOverride(10, 10);
+    starCounterGlowUntilMs = nowMs + 420;
 }
 
 function triggerBigBang(nowMs = performance.now()) {
@@ -1291,15 +1374,16 @@ function triggerBigBang(nowMs = performance.now()) {
         return;
     }
 
-    bigBangState = { startedAtMs: nowMs };
-    cancelVoidCountdown();
-    voidCounterPrimed = false;
-    lastBlackoutSpacePressMs = 0;
+    bigBangState = {
+        startedAtMs: nowMs,
+        endedAtMs: nowMs + BIG_BANG_RECOVERY_MS
+    };
+    resetBlackoutCountdownState(false);
     setCounterVoidMode(false);
 
     spaceLaunchCount = 0;
     starCounterGlowUntilMs = nowMs + 520;
-    updateStarCounterDisplay();
+    clearCounterDisplayOverride();
 
     pendingCompanionFromBlackout = false;
     companionSpawnedFromBlackout = false;
@@ -1363,23 +1447,63 @@ function triggerBigBang(nowMs = performance.now()) {
     blackHolePower = 0;
     blackHoleRadius = MIN_BLACKHOLE_RADIUS;
     lastPointerMoveMs = nowMs;
+    blackHolePulse = 0;
 
     if (singularityOverlay) {
         singularityOverlay.material.opacity = 0;
         singularityOverlay.visible = false;
     }
+    if (bigBangRing) {
+        bigBangRing.visible = true;
+        bigBangRing.material.opacity = 0.98;
+    }
+    if (bigBangFlash) {
+        bigBangFlash.visible = true;
+        bigBangFlash.material.opacity = 0.98;
+    }
+
+    // Re-seed diffuse matter so the rebuilt universe has fresh structure.
+    createNebulaLayer();
+    scheduleNextShootingStar(nowMs + 360);
 }
 
-function updateVoidCounterCountdown(nowMs) {
+function updateBlackoutCountdown(nowMs) {
     const blackout = isSingularityBlackout();
     if (!blackout) {
-        cancelVoidCountdown();
+        resetBlackoutCountdownState(true);
         return;
     }
 
-    if (!voidCounterPrimed && spaceLaunchCount > 0 && !bigBangState) {
-        voidCounterPrimed = true;
-        lastBlackoutSpacePressMs = nowMs;
+    if (bigBangState) {
+        return;
+    }
+
+    if (!blackoutCountdownActive) {
+        if (blackoutCountdownArmedAtMs <= 0) {
+            blackoutCountdownArmedAtMs = nowMs;
+            setCounterDisplayOverride(10, 10);
+            return;
+        }
+        if (nowMs - blackoutCountdownArmedAtMs >= BLACKOUT_COUNTDOWN_DELAY_MS) {
+            startBlackoutCountdown(nowMs);
+        } else {
+            setCounterDisplayOverride(10, 10);
+        }
+        return;
+    }
+
+    const elapsedMs = Math.max(0, nowMs - blackoutCountdownStartedAtMs);
+    const remainingMs = Math.max(0, BLACKOUT_COUNTDOWN_TOTAL_MS - elapsedMs);
+    const second = Math.max(0, Math.ceil(remainingMs / 1000));
+
+    if (second !== blackoutCountdownLastSecond) {
+        blackoutCountdownLastSecond = second;
+        setCounterDisplayOverride(second, second);
+        starCounterGlowUntilMs = nowMs + 320;
+    }
+
+    if (remainingMs <= 0) {
+        triggerBigBang(nowMs);
     }
 }
 
@@ -1388,33 +1512,69 @@ function updateBigBang(nowMs) {
         return;
     }
 
-    const progress = THREE.MathUtils.clamp((nowMs - bigBangState.startedAtMs) / BIG_BANG_FLASH_MS, 0, 1);
+    const elapsed = Math.max(0, nowMs - bigBangState.startedAtMs);
+    const progress = THREE.MathUtils.clamp(elapsed / BIG_BANG_FLASH_MS, 0, 1);
+    const ringProgress = THREE.MathUtils.clamp(elapsed / BIG_BANG_RING_EXPAND_MS, 0, 1);
 
     const overlayDistance = 0.33;
     camera.getWorldDirection(singularityCameraForward);
     singularityVectorA.copy(camera.position).addScaledVector(singularityCameraForward, overlayDistance);
     const halfHeight = Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5)) * overlayDistance;
     const halfWidth = halfHeight * camera.aspect;
-    const scaleMul = 1 + progress * 2.8;
+    const scaleMul = 1 + progress * 3.3;
 
     bigBangFlash.position.copy(singularityVectorA);
     bigBangFlash.quaternion.copy(camera.quaternion);
     bigBangFlash.scale.set(halfWidth * 2.1 * scaleMul, halfHeight * 2.1 * scaleMul, 1);
 
     let opacity;
-    if (progress < 0.18) {
-        opacity = progress / 0.18;
+    if (progress < 0.12) {
+        opacity = progress / 0.12;
     } else {
-        const tail = 1 - ((progress - 0.18) / 0.82);
-        opacity = Math.max(0, tail * tail * 0.95);
+        const tail = 1 - ((progress - 0.12) / 0.88);
+        opacity = Math.max(0, Math.pow(tail, 2.2) * 0.96);
     }
     bigBangFlash.material.opacity = opacity;
     bigBangFlash.visible = opacity > 0.002;
 
-    if (progress >= 1) {
+    if (bigBangRing) {
+        bigBangRing.position.copy(singularityVectorA);
+        bigBangRing.quaternion.copy(camera.quaternion);
+        const ringScale = 0.42 + ringProgress * 8.4;
+        bigBangRing.scale.set(halfWidth * ringScale, halfHeight * ringScale, 1);
+        const ringOpacity = Math.max(0, Math.pow(1 - ringProgress, 1.8) * 0.88);
+        bigBangRing.material.opacity = ringOpacity;
+        bigBangRing.visible = ringOpacity > 0.002;
+        bigBangRing.rotation.z += 0.0018;
+    }
+
+    // Briefly bloom star brightness while the shockwave expands.
+    const burstBoost = Math.max(0, 1 - ringProgress) * 0.42;
+    if (stars && stars.material) {
+        stars.material.opacity = THREE.MathUtils.clamp(0.48 + burstBoost, 0.48, 0.9);
+    }
+    if (deepStars && deepStars.material) {
+        deepStars.material.opacity = THREE.MathUtils.clamp(0.22 + burstBoost * 0.7, 0.22, 0.62);
+    }
+    const shake = Math.max(0, 1 - ringProgress) * 0.22;
+    camera.position.x = Math.sin(nowMs * 0.038) * shake;
+    camera.position.y = 6 + Math.cos(nowMs * 0.034 + 1.2) * shake;
+
+    if (nowMs >= bigBangState.endedAtMs) {
         bigBangState = null;
         bigBangFlash.visible = false;
         bigBangFlash.material.opacity = 0;
+        if (bigBangRing) {
+            bigBangRing.visible = false;
+            bigBangRing.material.opacity = 0;
+        }
+        if (stars && stars.material) {
+            stars.material.opacity = 0.48;
+        }
+        if (deepStars && deepStars.material) {
+            deepStars.material.opacity = 0.22;
+        }
+        camera.position.set(0, 6, 75);
     }
 }
 
@@ -1899,7 +2059,7 @@ function handleBlackholeBreakByPointer(nowMs = performance.now()) {
 
     companionSpawnedFromBlackout = false;
     pendingCompanionFromBlackout = false;
-    cancelVoidCountdown();
+    resetBlackoutCountdownState(true);
     setCounterVoidMode(false);
     if (constellationEntryState) {
         snapConstellationPayloadToBase(constellationEntryState.dust);
@@ -2355,7 +2515,6 @@ function bindEvents() {
                 return;
             }
             if (isSingularityBlackout()) {
-                handleBlackoutSpacePress(now);
                 return;
             }
 
@@ -2864,12 +3023,45 @@ function createPhotonRingTexture() {
     return texture;
 }
 
+function createBigBangRingTexture() {
+    const size = 512;
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const context = canvas.getContext("2d");
+    const center = size * 0.5;
+
+    context.clearRect(0, 0, size, size);
+    const ring = context.createRadialGradient(center, center, size * 0.16, center, center, size * 0.5);
+    ring.addColorStop(0, "rgba(0,0,0,0)");
+    ring.addColorStop(0.45, "rgba(0,0,0,0)");
+    ring.addColorStop(0.56, "rgba(255,232,180,0.92)");
+    ring.addColorStop(0.63, "rgba(146,198,255,0.58)");
+    ring.addColorStop(0.74, "rgba(0,0,0,0)");
+    ring.addColorStop(1, "rgba(0,0,0,0)");
+    context.fillStyle = ring;
+    context.fillRect(0, 0, size, size);
+
+    const coreGlow = context.createRadialGradient(center, center, 0, center, center, size * 0.24);
+    coreGlow.addColorStop(0, "rgba(255,255,255,0.78)");
+    coreGlow.addColorStop(0.3, "rgba(255,235,186,0.44)");
+    coreGlow.addColorStop(1, "rgba(0,0,0,0)");
+    context.fillStyle = coreGlow;
+    context.fillRect(0, 0, size, size);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    return texture;
+}
+
 function createBlackHoleVisual() {
     const holeTexture = createBlackHoleTexture();
     const lensTexture = createBlackHoleLensingTexture();
     const diskTexture = createAccretionDiskTexture(1, 0.58);
     const innerDiskTexture = createAccretionDiskTexture(7, 0.96);
     const photonRingTexture = createPhotonRingTexture();
+    const bigBangRingTexture = createBigBangRingTexture();
     blackHoleCore = new THREE.Mesh(
         new THREE.PlaneGeometry(2, 2),
         new THREE.MeshBasicMaterial({
@@ -2975,6 +3167,21 @@ function createBlackHoleVisual() {
     bigBangFlash.renderOrder = 1300;
     bigBangFlash.visible = false;
     scene.add(bigBangFlash);
+
+    bigBangRing = new THREE.Mesh(
+        new THREE.PlaneGeometry(2, 2),
+        new THREE.MeshBasicMaterial({
+            map: bigBangRingTexture,
+            transparent: true,
+            opacity: 0,
+            depthWrite: false,
+            depthTest: false,
+            blending: THREE.AdditiveBlending
+        })
+    );
+    bigBangRing.renderOrder = 1295;
+    bigBangRing.visible = false;
+    scene.add(bigBangRing);
 }
 
 function createShootingStarTexture() {
@@ -4666,7 +4873,7 @@ function animate(nowMs = performance.now()) {
 
     updateBlackHole(delta, nowMs);
     setCounterVoidMode(isSingularityBlackout());
-    updateVoidCounterCountdown(nowMs);
+    updateBlackoutCountdown(nowMs);
     updateStarCounterVisual(nowMs);
 
     const dynamicSpawnInterval = Math.max(
