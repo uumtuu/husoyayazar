@@ -17,7 +17,7 @@ const foods = [
     "ıslak hamburger"
 ];
 
-const BUILD_ID = "20260219-constellation-v26-blackout-auto-countdown-bigbang";
+const BUILD_ID = "20260219-constellation-v27-cinematic-relativity-pass";
 
 const BASE_STAR_COUNT = 22000;
 const MIN_STAR_COUNT = 7000;
@@ -88,15 +88,29 @@ const STAR_COUNTER_DIGIT_HEIGHT = 15.8;
 const STAR_COUNTER_DIGIT_GAP = 2.8;
 const STAR_COUNTER_SEGMENT_POINT_STEP = 0.52;
 const STAR_COUNTER_VOID_SCALE = 2.28;
+const STAR_COUNTER_CANVAS_WIDTH = 960;
+const STAR_COUNTER_CANVAS_HEIGHT = 320;
+const STAR_COUNTER_VOID_CANVAS_WIDTH = 1920;
+const STAR_COUNTER_VOID_CANVAS_HEIGHT = 1080;
+const STAR_COUNTER_LINE_WIDTH = 12;
+const STAR_COUNTER_GLOW_WIDTH = 26;
+const STAR_COUNTER_PULSE_MS = 620;
 const BLACKOUT_COUNTDOWN_DELAY_MS = 2000;
 const BLACKOUT_COUNTDOWN_TOTAL_MS = 10000;
 const BIG_BANG_FLASH_MS = 2100;
 const BIG_BANG_RING_EXPAND_MS = 2800;
 const BIG_BANG_RECOVERY_MS = 3200;
+const BIG_BANG_CALM_MS = 9000;
 const BIG_BANG_STAR_BURST_MIN = 2.4;
 const BIG_BANG_STAR_BURST_MAX = 8.8;
 const BIG_BANG_DEEP_BURST_MIN = 1.2;
 const BIG_BANG_DEEP_BURST_MAX = 4.8;
+const CONSTELLATION_BIGBANG_ENTRY_SPEED = 0.4;
+const CONSTELLATION_BIGBANG_ENTRY_FAST_MS = 8200;
+const CONSTELLATION_DUAL_ROT_X = -0.004;
+const CONSTELLATION_DUAL_ROT_Z = -0.0015;
+const COMPANION_SCALE_MULT = 1.14;
+const COMPANION_Z_OFFSET = 26;
 const DUAL_CONSTELLATION_SPLIT_X = 430;
 const DUAL_CONSTELLATION_SLIDE_MS = 3600;
 const COMPANION_CONSTELLATION_FADE_MS = 1300;
@@ -195,6 +209,14 @@ const STAR_GRAV_LENS_COLOR_SHIFT = 0.24;
 const STAR_DOPPLER_COLOR_SHIFT = 0.18;
 const STAR_PASSIVE_INFLUENCE_RADIUS = 118;
 const FOOD_PASSIVE_INFLUENCE_RADIUS = 136;
+const STAR_SHADER_BASE_SIZE = 1.05;
+const DEEP_STAR_SHADER_BASE_SIZE = 0.84;
+const STAR_SHADER_OPACITY = 0.56;
+const DEEP_STAR_SHADER_OPACITY = 0.27;
+const GALACTIC_BAND_NEAR_RATIO = 0.74;
+const GALACTIC_BAND_DEEP_RATIO = 0.66;
+const GALACTIC_BAND_NEAR_SIGMA = 0.2;
+const GALACTIC_BAND_DEEP_SIGMA = 0.28;
 
 const SHOOTING_STAR_MIN_INTERVAL_MS = 2000;
 const SHOOTING_STAR_MAX_INTERVAL_MS = 5200;
@@ -222,6 +244,7 @@ let starColors;
 let starTwinklePhase;
 let starBaseColors;
 let starTwinkleAmp;
+let starSizes;
 let deepStarCount = MIN_DEEP_STAR_COUNT;
 let deepStarPositions;
 let deepStarDrift;
@@ -229,6 +252,7 @@ let deepStarColors;
 let deepStarTwinklePhase;
 let deepStarBaseColors;
 let deepStarTwinkleAmp;
+let deepStarSizes;
 
 let blackHoleCore;
 let blackHoleLensing;
@@ -308,6 +332,10 @@ let starCounterTransitionUntilMs = 0;
 let starCounterLastSignature = "";
 let starCounterGlowUntilMs = 0;
 let starCounterDisplayText = "0";
+let starCounterCanvas = null;
+let starCounterContext = null;
+let starCounterTexture = null;
+let starCounterGlowMesh = null;
 let counterDisplayOverrideValue = null;
 let counterStyleVariant = -1;
 let counterVoidMode = false;
@@ -316,6 +344,8 @@ let blackoutCountdownStartedAtMs = 0;
 let blackoutCountdownActive = false;
 let blackoutCountdownLastSecond = -1;
 let bigBangState = null;
+let bigBangCalmUntilMs = 0;
+let constellationFastEntryUntilMs = 0;
 let dualConstellationActive = false;
 let dualConstellationActivatedAtMs = 0;
 let dualConstellationProgress = 0;
@@ -325,6 +355,7 @@ const companionBursts = [];
 const counterSourceWorld = new THREE.Vector3();
 const counterSourceLocal = new THREE.Vector3();
 const counterQuatInverse = new THREE.Quaternion();
+const counterDrawTmpColor = new THREE.Color();
 
 function getPlaneHalfExtentsAtZ(zValue) {
     if (!camera) {
@@ -380,6 +411,99 @@ function assignStarSpectralProfile(index3, baseColorBuffer, twinkleAmpBuffer, st
     baseColorBuffer[index3 + 1] = g * brightness;
     baseColorBuffer[index3 + 2] = b * brightness;
     twinkleAmpBuffer[starIndex] = twinkleMul * (0.72 + Math.random() * 0.66);
+}
+
+function randomGaussian() {
+    let u = 0;
+    let v = 0;
+    while (u === 0) {
+        u = Math.random();
+    }
+    while (v === 0) {
+        v = Math.random();
+    }
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(Math.PI * 2 * v);
+}
+
+function sampleGalacticAxis(width, height, bandRatio, sigmaMul) {
+    const xUniform = (Math.random() - 0.5) * width;
+    const laneWarp = Math.sin(xUniform * 0.0037 + Math.random() * Math.PI * 2) * width * 0.035;
+    const x = THREE.MathUtils.clamp(xUniform + laneWarp, -width * 0.5, width * 0.5);
+
+    if (Math.random() < bandRatio) {
+        const gaussian = randomGaussian() * height * sigmaMul;
+        return {
+            x,
+            y: THREE.MathUtils.clamp(gaussian, -height * 0.5, height * 0.5)
+        };
+    }
+
+    return {
+        x,
+        y: (Math.random() - 0.5) * height
+    };
+}
+
+function createStarPointShaderMaterial(baseSize, baseOpacity) {
+    return new THREE.ShaderMaterial({
+        uniforms: {
+            uBaseSize: { value: baseSize },
+            uOpacity: { value: baseOpacity }
+        },
+        vertexShader: `
+            attribute float aSize;
+            attribute vec3 color;
+            varying vec3 vColor;
+            varying float vOpacity;
+            uniform float uBaseSize;
+            uniform float uOpacity;
+
+            void main() {
+                vColor = color;
+                vOpacity = uOpacity;
+                vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                float dist = max(1.0, -mvPosition.z);
+                gl_PointSize = uBaseSize * aSize * (220.0 / dist);
+                gl_Position = projectionMatrix * mvPosition;
+            }
+        `,
+        fragmentShader: `
+            precision highp float;
+            varying vec3 vColor;
+            varying float vOpacity;
+
+            void main() {
+                vec2 p = gl_PointCoord * 2.0 - 1.0;
+                float r2 = dot(p, p);
+                if (r2 > 1.0) {
+                    discard;
+                }
+
+                float core = exp(-r2 * 8.4);
+                float halo = exp(-r2 * 2.1) * 0.62;
+                float alpha = (core + halo) * vOpacity;
+                vec3 color = vColor * (0.58 + core * 0.92);
+                gl_FragColor = vec4(color, alpha);
+            }
+        `,
+        transparent: true,
+        depthWrite: false,
+        depthTest: true,
+        blending: THREE.AdditiveBlending,
+        vertexColors: true
+    });
+}
+
+function setStarMaterialOpacity(target, opacity) {
+    if (!target || !target.material) {
+        return;
+    }
+
+    if (target.material.uniforms && target.material.uniforms.uOpacity) {
+        target.material.uniforms.uOpacity.value = opacity;
+        return;
+    }
+    target.material.opacity = opacity;
 }
 
 function getEntrySideVector(x, y) {
@@ -802,7 +926,10 @@ function updateConstellationEntryMotion(nowMs) {
         return;
     }
 
-    const elapsedMs = Math.max(0, nowMs - constellationReadyAtMs);
+    const entrySpeed = nowMs < constellationFastEntryUntilMs
+        ? CONSTELLATION_BIGBANG_ENTRY_SPEED
+        : 1;
+    const elapsedMs = Math.max(0, (nowMs - constellationReadyAtMs) * entrySpeed);
     const dustDone = updateConstellationEntryPayload(constellationEntryState.dust, elapsedMs);
     const nodeDone = updateConstellationEntryPayload(constellationEntryState.nodes, elapsedMs);
     const nearDone = updateConstellationEntryPayload(constellationEntryState.linesNear, elapsedMs);
@@ -824,6 +951,7 @@ function updateConstellationEntryMotion(nowMs) {
             constellationEntryState.linesFar.strokeLine.visible = false;
         }
         constellationEntryState.active = false;
+        constellationFastEntryUntilMs = 0;
     }
 }
 
@@ -1103,52 +1231,239 @@ function seedCounterPointFromScene(index3, tx, ty, tz, voidMode) {
     starCounterPositions[index3 + 2] = THREE.MathUtils.lerp(counterSourceLocal.z, tz, pull) + THREE.MathUtils.randFloatSpread(0.12);
 }
 
+function ensureCounterCanvas(voidMode) {
+    if (!starCounterCanvas) {
+        starCounterCanvas = document.createElement("canvas");
+    }
+
+    const targetWidth = voidMode ? STAR_COUNTER_VOID_CANVAS_WIDTH : STAR_COUNTER_CANVAS_WIDTH;
+    const targetHeight = voidMode ? STAR_COUNTER_VOID_CANVAS_HEIGHT : STAR_COUNTER_CANVAS_HEIGHT;
+    if (starCounterCanvas.width !== targetWidth || starCounterCanvas.height !== targetHeight) {
+        starCounterCanvas.width = targetWidth;
+        starCounterCanvas.height = targetHeight;
+    }
+
+    if (!starCounterContext) {
+        starCounterContext = starCounterCanvas.getContext("2d");
+    }
+}
+
+function counterColorToRgba(color, alpha) {
+    const r = Math.round(THREE.MathUtils.clamp(color.r, 0, 1) * 255);
+    const g = Math.round(THREE.MathUtils.clamp(color.g, 0, 1) * 255);
+    const b = Math.round(THREE.MathUtils.clamp(color.b, 0, 1) * 255);
+    return `rgba(${r}, ${g}, ${b}, ${THREE.MathUtils.clamp(alpha, 0, 1).toFixed(4)})`;
+}
+
+function drawCounterSevenSegmentCanvas(valueText, voidMode, styleVariant) {
+    ensureCounterCanvas(voidMode);
+    if (!starCounterContext || !starCounterCanvas) {
+        return;
+    }
+
+    const ctx = starCounterContext;
+    const width = starCounterCanvas.width;
+    const height = starCounterCanvas.height;
+    ctx.clearRect(0, 0, width, height);
+
+    const text = String(valueText && valueText.length ? valueText : "0");
+    const digitCount = Math.max(1, text.length);
+    const rawValue = Number(valueText || 0);
+    const warmUnlock = rawValue >= SPACE_COUNTER_TARGET ? 1 : 0;
+    const stylePhase = styleVariant >= 0 ? ((styleVariant % 11) / 11) : 0;
+    const hue = 196 - warmUnlock * 18 + stylePhase * 22;
+    const sat = 0.46 + warmUnlock * 0.2;
+
+    const marginX = voidMode ? width * 0.075 : width * 0.15;
+    const marginY = voidMode ? height * 0.14 : height * 0.24;
+    const contentW = Math.max(20, width - marginX * 2);
+    const contentH = Math.max(20, height - marginY * 2);
+    const digitGap = contentW * (voidMode ? 0.052 : 0.075) / Math.max(1, digitCount);
+    const digitW = (contentW - digitGap * Math.max(0, digitCount - 1)) / digitCount;
+    const digitH = contentH;
+    const startX = (width - (digitW * digitCount + digitGap * Math.max(0, digitCount - 1))) * 0.5;
+    const startY = (height - digitH) * 0.5;
+
+    const segmentDefsForDigit = (left, top, w, h) => {
+        const right = left + w;
+        const bottom = top + h;
+        const midY = (top + bottom) * 0.5;
+        const hInset = w * 0.18;
+        const vInset = h * 0.08;
+        const xL = left + hInset * 0.42;
+        const xR = right - hInset * 0.42;
+        const yT = top + vInset;
+        const yB = bottom - vInset;
+        return [
+            [left + hInset, yT, right - hInset, yT],      // A
+            [xL, yT, xL, midY],                            // B
+            [xR, yT, xR, midY],                            // C
+            [left + hInset, midY, right - hInset, midY],  // D
+            [xL, midY, xL, yB],                            // E
+            [xR, midY, xR, yB],                            // F
+            [left + hInset, yB, right - hInset, yB]       // G
+        ];
+    };
+
+    const nodes = [];
+    const edges = [];
+    const addConstellationSegment = (ax, ay, bx, by, seed, density) => {
+        let prevIndex = -1;
+        for (let i = 0; i <= density; i += 1) {
+            const t = i / Math.max(1, density);
+            const px = THREE.MathUtils.lerp(ax, bx, t);
+            const py = THREE.MathUtils.lerp(ay, by, t);
+            const dx = bx - ax;
+            const dy = by - ay;
+            const len = Math.max(0.001, Math.hypot(dx, dy));
+            const nx = -dy / len;
+            const ny = dx / len;
+            const jitter = (seededUnit(seed * 31.17 + i * 7.31) - 0.5) * (voidMode ? 5.8 : 2.3);
+            const x = px + nx * jitter;
+            const y = py + ny * jitter;
+
+            const nodeIndex = nodes.length;
+            nodes.push({
+                x,
+                y,
+                phase: seededUnit(seed * 13.11 + i * 3.9) * Math.PI * 2,
+                intensity: 0.64 + seededUnit(seed * 19.71 + i * 5.13) * 0.52
+            });
+            if (prevIndex >= 0) {
+                edges.push([prevIndex, nodeIndex, 0.78]);
+            }
+            prevIndex = nodeIndex;
+        }
+    };
+
+    for (let d = 0; d < digitCount; d += 1) {
+        const left = startX + d * (digitW + digitGap);
+        const top = startY;
+        const segments = segmentDefsForDigit(left, top, digitW, digitH);
+        const active = digitToSevenSegments(text[d]);
+        const density = voidMode ? 15 : 9;
+        for (let s = 0; s < active.length; s += 1) {
+            const seg = segments[active[s]];
+            addConstellationSegment(seg[0], seg[1], seg[2], seg[3], (d + 1) * 17 + active[s] * 5, density);
+        }
+    }
+
+    // Connect nearest stars to get a constellation-web look.
+    const linkDistance = (voidMode ? 46 : 24);
+    const linkDistanceSq = linkDistance * linkDistance;
+    for (let i = 0; i < nodes.length; i += 1) {
+        let links = 0;
+        for (let j = i + 1; j < nodes.length && links < 2; j += 1) {
+            const dx = nodes[j].x - nodes[i].x;
+            const dy = nodes[j].y - nodes[i].y;
+            const distSq = dx * dx + dy * dy;
+            if (distSq > linkDistanceSq) {
+                continue;
+            }
+            const chance = 0.18 + (1 - distSq / linkDistanceSq) * 0.42;
+            if (seededUnit((i + 1) * 23.17 + (j + 1) * 9.31 + stylePhase * 7.11) > chance) {
+                continue;
+            }
+            edges.push([i, j, 0.38 + (1 - distSq / linkDistanceSq) * 0.36]);
+            links += 1;
+        }
+    }
+
+    counterDrawTmpColor.setHSL(hue / 360, sat, voidMode ? 0.82 : 0.74);
+    const starCore = counterColorToRgba(counterDrawTmpColor, 0.98);
+    counterDrawTmpColor.setHSL((hue + 9) / 360, 0.68, 0.64 + warmUnlock * 0.12);
+    const starGlow = counterColorToRgba(counterDrawTmpColor, voidMode ? 0.54 : 0.34);
+    counterDrawTmpColor.setHSL((hue + 4) / 360, 0.28, 0.86);
+    const edgeColor = counterColorToRgba(counterDrawTmpColor, voidMode ? 0.25 : 0.15);
+
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    for (let i = 0; i < edges.length; i += 1) {
+        const edge = edges[i];
+        const a = nodes[edge[0]];
+        const b = nodes[edge[1]];
+        if (!a || !b) {
+            continue;
+        }
+        ctx.beginPath();
+        ctx.lineWidth = (voidMode ? 1.8 : 1.2) * edge[2];
+        ctx.strokeStyle = edgeColor;
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+    }
+
+    for (let i = 0; i < nodes.length; i += 1) {
+        const node = nodes[i];
+        const pulse = 0.82 + Math.sin(node.phase + stylePhase * 6.0) * 0.18;
+        const coreR = (voidMode ? 2.05 : 1.22) * node.intensity * pulse;
+        const glowR = coreR * (voidMode ? 3.6 : 2.9);
+        const grad = ctx.createRadialGradient(node.x, node.y, 0, node.x, node.y, glowR);
+        grad.addColorStop(0, starCore);
+        grad.addColorStop(0.34, starGlow);
+        grad.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.beginPath();
+        ctx.fillStyle = grad;
+        ctx.arc(node.x, node.y, glowR, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    const ambientCount = voidMode ? 240 : 84;
+    counterDrawTmpColor.setHSL(hue / 360, 0.2, 0.74);
+    ctx.fillStyle = counterColorToRgba(counterDrawTmpColor, voidMode ? 0.16 : 0.09);
+    for (let i = 0; i < ambientCount; i += 1) {
+        const sx = seededUnit((i + 1) * 17.37 + stylePhase * 7.1 + text.length * 0.9) * width;
+        const sy = seededUnit((i + 1) * 29.11 + stylePhase * 11.4 + text.length * 0.53) * height;
+        const rr = (voidMode ? 1.45 : 0.82) * (0.4 + seededUnit((i + 1) * 3.77) * 0.9);
+        ctx.beginPath();
+        ctx.arc(sx, sy, rr, 0, Math.PI * 2);
+        ctx.fill();
+    }
+}
+
 function createStarCounterUI() {
     if (starCounterGroup || !scene) {
         return;
     }
 
-    const group = new THREE.Group();
-    const pointCapacity = STAR_COUNTER_MAX_POINTS;
-    starCounterPositions = new Float32Array(pointCapacity * 3);
-    starCounterTargetPositions = new Float32Array(pointCapacity * 3);
-    starCounterColors = new Float32Array(pointCapacity * 3);
-    starCounterPhases = new Float32Array(pointCapacity);
-    starCounterBaseIntensity = new Float32Array(pointCapacity);
-
-    for (let i = 0; i < pointCapacity; i += 1) {
-        const index3 = i * 3;
-        starCounterPositions[index3] = THREE.MathUtils.randFloatSpread(22);
-        starCounterPositions[index3 + 1] = THREE.MathUtils.randFloatSpread(8);
-        starCounterPositions[index3 + 2] = THREE.MathUtils.randFloatSpread(1.2);
-        starCounterTargetPositions[index3] = 0;
-        starCounterTargetPositions[index3 + 1] = 0;
-        starCounterTargetPositions[index3 + 2] = 0;
-        starCounterPhases[i] = Math.random() * Math.PI * 2;
-        starCounterBaseIntensity[i] = 0.72 + Math.random() * 0.34;
+    ensureCounterCanvas(false);
+    if (!starCounterCanvas || !starCounterContext) {
+        return;
     }
 
-    starCounterGeometry = new THREE.BufferGeometry();
-    starCounterGeometry.setAttribute("position", new THREE.BufferAttribute(starCounterPositions, 3));
-    starCounterGeometry.setAttribute("color", new THREE.BufferAttribute(starCounterColors, 3));
-    starCounterGeometry.setDrawRange(0, 0);
+    starCounterTexture = new THREE.CanvasTexture(starCounterCanvas);
+    starCounterTexture.minFilter = THREE.LinearFilter;
+    starCounterTexture.magFilter = THREE.LinearFilter;
 
-    const material = new THREE.PointsMaterial({
-        size: 0.38,
-        sizeAttenuation: true,
+    const group = new THREE.Group();
+    starCounterGeometry = new THREE.PlaneGeometry(1, 1);
+
+    const glowMaterial = new THREE.MeshBasicMaterial({
+        map: starCounterTexture,
         transparent: true,
-        opacity: 0.88,
+        opacity: 0.44,
         depthWrite: false,
         depthTest: false,
-        vertexColors: true,
         blending: THREE.AdditiveBlending
     });
-    starCounterPoints = new THREE.Points(starCounterGeometry, material);
+    starCounterGlowMesh = new THREE.Mesh(starCounterGeometry.clone(), glowMaterial);
+    starCounterGlowMesh.renderOrder = 1249;
+    starCounterGlowMesh.scale.set(1.08, 1.08, 1);
+    group.add(starCounterGlowMesh);
+
+    const coreMaterial = new THREE.MeshBasicMaterial({
+        map: starCounterTexture,
+        transparent: true,
+        opacity: 0.92,
+        depthWrite: false,
+        depthTest: false,
+        blending: THREE.AdditiveBlending
+    });
+    starCounterPoints = new THREE.Mesh(starCounterGeometry, coreMaterial);
     starCounterPoints.renderOrder = 1250;
     group.add(starCounterPoints);
 
     starCounterGroup = group;
-    starCounterPointCount = 0;
     starCounterTransitionStartedMs = performance.now();
     starCounterTransitionUntilMs = starCounterTransitionStartedMs;
     updateStarCounterDisplay();
@@ -1156,7 +1471,7 @@ function createStarCounterUI() {
 }
 
 function updateStarCounterDisplay() {
-    if (!starCounterGeometry || !starCounterPositions || !starCounterTargetPositions) {
+    if (!starCounterTexture) {
         return;
     }
 
@@ -1166,52 +1481,20 @@ function updateStarCounterDisplay() {
     const value = String(rawValue);
     starCounterDisplayText = value;
     const signature = `${counterVoidMode ? "V" : "N"}:${value}:S${counterStyleVariant}`;
-    const signatureChanged = signature !== starCounterLastSignature;
-    const targetTriples = applyCounterConstellationStyle(
-        buildStarCounterTargetTriples(value, counterVoidMode),
-        counterStyleVariant,
-        counterVoidMode
-    );
-    const nextCount = Math.min(STAR_COUNTER_MAX_POINTS, Math.floor(targetTriples.length / 3));
-    const oldCount = starCounterPointCount;
-
-    for (let i = 0; i < nextCount; i += 1) {
-        const index3 = i * 3;
-        const tx = targetTriples[index3];
-        const ty = targetTriples[index3 + 1];
-        const tz = targetTriples[index3 + 2];
-        starCounterTargetPositions[index3] = tx;
-        starCounterTargetPositions[index3 + 1] = ty;
-        starCounterTargetPositions[index3 + 2] = tz;
-
-        if (i >= oldCount || signatureChanged) {
-            seedCounterPointFromScene(index3, tx, ty, tz, counterVoidMode);
-            starCounterPhases[i] = Math.random() * Math.PI * 2;
-        }
-        starCounterBaseIntensity[i] = 0.66 + Math.random() * 0.46;
+    if (signature === starCounterLastSignature) {
+        return;
     }
 
-    for (let i = nextCount; i < oldCount; i += 1) {
-        const index3 = i * 3;
-        starCounterTargetPositions[index3] = starCounterPositions[index3] + THREE.MathUtils.randFloatSpread(0.8);
-        starCounterTargetPositions[index3 + 1] = starCounterPositions[index3 + 1] + THREE.MathUtils.randFloatSpread(0.8);
-        starCounterTargetPositions[index3 + 2] = starCounterPositions[index3 + 2] + THREE.MathUtils.randFloatSpread(0.4);
-    }
-
-    starCounterPointCount = nextCount;
-    starCounterGeometry.setDrawRange(0, starCounterPointCount);
-    starCounterGeometry.attributes.position.needsUpdate = true;
-    if (starCounterGeometry.attributes.color) {
-        starCounterGeometry.attributes.color.needsUpdate = true;
-    }
+    drawCounterSevenSegmentCanvas(value, counterVoidMode, counterStyleVariant);
+    starCounterTexture.needsUpdate = true;
 
     starCounterTransitionStartedMs = performance.now();
-    starCounterTransitionUntilMs = starCounterTransitionStartedMs + STAR_COUNTER_TRANSITION_MS;
+    starCounterTransitionUntilMs = starCounterTransitionStartedMs + STAR_COUNTER_PULSE_MS;
     starCounterLastSignature = signature;
 }
 
 function updateStarCounterVisual(nowMs) {
-    if (!starCounterGroup || !starCounterPoints || !starCounterGeometry || !camera) {
+    if (!starCounterGroup || !starCounterPoints || !starCounterTexture || !camera) {
         return;
     }
     starCounterGroup.visible = true;
@@ -1219,11 +1502,7 @@ function updateStarCounterVisual(nowMs) {
     const { halfWidth, halfHeight } = getPlaneHalfExtentsAtZ(STAR_COUNTER_WORLD_Z);
     const blackout = isSingularityBlackout();
     if (counterVoidMode) {
-        starCounterGroup.position.set(
-            camera.position.x,
-            camera.position.y,
-            STAR_COUNTER_WORLD_Z
-        );
+        starCounterGroup.position.set(camera.position.x, camera.position.y, STAR_COUNTER_WORLD_Z);
     } else {
         starCounterGroup.position.set(
             camera.position.x + halfWidth - STAR_COUNTER_MARGIN_X,
@@ -1232,21 +1511,36 @@ function updateStarCounterVisual(nowMs) {
         );
     }
     starCounterGroup.quaternion.copy(camera.quaternion);
+
+    const textureAspect = starCounterCanvas
+        ? (starCounterCanvas.width / Math.max(1, starCounterCanvas.height))
+        : 2.8;
+
+    let widthUnits;
+    let heightUnits;
     if (counterVoidMode) {
-        const size = getCounterGlyphSize(starCounterDisplayText, true);
-        const fitX = (halfWidth * 1.9) / Math.max(1, size.width);
-        const fitY = (halfHeight * 1.9) / Math.max(1, size.height);
-        const uniform = Math.max(0.001, Math.min(fitX, fitY));
-        starCounterGroup.scale.set(uniform, uniform, 1);
+        widthUnits = halfWidth * 1.92;
+        heightUnits = widthUnits / textureAspect;
+        const maxHeight = halfHeight * 1.92;
+        if (heightUnits > maxHeight) {
+            heightUnits = maxHeight;
+            widthUnits = heightUnits * textureAspect;
+        }
     } else {
-        starCounterGroup.scale.set(STAR_COUNTER_WORLD_SCALE / 36, STAR_COUNTER_WORLD_SCALE / 36, 1);
+        heightUnits = 2.7;
+        widthUnits = heightUnits * textureAspect;
     }
 
     if (singularityCollapse > 0.0001 && !blackout) {
         pointerAtZ(STAR_COUNTER_WORLD_Z, singularityVectorA);
-        const pullLerp = THREE.MathUtils.clamp(0.02 + singularityCollapse * 0.22, 0, 0.5);
+        const pullLerp = THREE.MathUtils.clamp(0.02 + singularityCollapse * 0.24, 0, 0.5);
         starCounterGroup.position.lerp(singularityVectorA, pullLerp);
+        const shrink = THREE.MathUtils.clamp(1 - singularityCollapse * 0.72, 0.2, 1);
+        widthUnits *= shrink;
+        heightUnits *= shrink;
     }
+
+    starCounterGroup.scale.set(widthUnits, heightUnits, 1);
 
     const transitionDuration = Math.max(1, starCounterTransitionUntilMs - starCounterTransitionStartedMs);
     const transitionProgress = THREE.MathUtils.clamp(
@@ -1254,65 +1548,19 @@ function updateStarCounterVisual(nowMs) {
         0,
         1
     );
-    const settle = (counterVoidMode ? 0.22 : 0.28) + transitionProgress * 0.24;
-    const twinkle = 0.74 + Math.sin(nowMs * 0.0039 + 0.4) * 0.12 + Math.sin(nowMs * 0.0066 + 1.8) * 0.06;
+    const pulse = 1 + Math.pow(1 - transitionProgress, 2) * 0.14;
+    const flicker = 0.88 + Math.sin(nowMs * 0.0047 + 0.31) * 0.08 + Math.sin(nowMs * 0.0072 + 1.41) * 0.06;
     const glowLeft = Math.max(0, starCounterGlowUntilMs - nowMs);
     const glowBoost = glowLeft > 0 ? THREE.MathUtils.clamp(glowLeft / 360, 0, 1) : 0;
-    const liveCounterValue = counterDisplayOverrideValue === null ? spaceLaunchCount : counterDisplayOverrideValue;
-    const warmUnlock = liveCounterValue >= SPACE_COUNTER_TARGET ? 1 : 0;
-    const styleMotion = counterStyleVariant >= 0 ? (0.05 + (counterStyleVariant % 5) * 0.012) : 0;
-    const styleHueShift = counterStyleVariant >= 0 ? ((counterStyleVariant % 11) / 11) : 0;
+    const collapseDamp = blackout ? 1 : (1 - singularityCollapse * 0.58);
+    const baseOpacity = counterVoidMode ? 0.96 : 0.88;
+    const coreOpacity = THREE.MathUtils.clamp(baseOpacity * flicker * pulse * collapseDamp + glowBoost * 0.15, 0.26, 1);
+    const glowOpacity = THREE.MathUtils.clamp((0.36 + glowBoost * 0.42) * flicker * collapseDamp, 0.14, 0.92);
 
-    for (let i = 0; i < starCounterPointCount; i += 1) {
-        const index3 = i * 3;
-        const tx = starCounterTargetPositions[index3];
-        const ty = starCounterTargetPositions[index3 + 1];
-        const tz = starCounterTargetPositions[index3 + 2];
-
-        starCounterPositions[index3] = THREE.MathUtils.lerp(starCounterPositions[index3], tx, settle);
-        starCounterPositions[index3 + 1] = THREE.MathUtils.lerp(starCounterPositions[index3 + 1], ty, settle);
-        starCounterPositions[index3 + 2] = THREE.MathUtils.lerp(starCounterPositions[index3 + 2], tz, settle * 0.92);
-
-        if (styleMotion > 0) {
-            const motionPhase = nowMs * (0.0012 + counterStyleVariant * 0.00006) + starCounterPhases[i] * 1.7;
-            const flowX = Math.sin(motionPhase + ty * 0.42) * styleMotion;
-            const flowY = Math.cos(motionPhase * 1.03 + tx * 0.38) * styleMotion;
-            starCounterPositions[index3] += flowX;
-            starCounterPositions[index3 + 1] += flowY;
-        }
-
-        const phase = starCounterPhases[i] + nowMs * STAR_COUNTER_TWINKLE_SPEED;
-        const sparkle = 0.76 + Math.sin(phase) * 0.18;
-        const brightness = THREE.MathUtils.clamp(
-            starCounterBaseIntensity[i] * sparkle * twinkle + glowBoost * 0.38,
-            0,
-            1.25
-        );
-
-        const baseR = 0.78 + warmUnlock * 0.16 + styleHueShift * 0.18;
-        const baseG = 0.86 + warmUnlock * 0.05 - styleHueShift * 0.08;
-        const baseB = 0.96 - warmUnlock * 0.22 + (1 - styleHueShift) * 0.08;
-        starCounterColors[index3] = THREE.MathUtils.clamp(baseR * brightness, 0, 1);
-        starCounterColors[index3 + 1] = THREE.MathUtils.clamp(baseG * brightness, 0, 1);
-        starCounterColors[index3 + 2] = THREE.MathUtils.clamp(baseB * brightness, 0, 1);
+    starCounterPoints.material.opacity = coreOpacity;
+    if (starCounterGlowMesh && starCounterGlowMesh.material) {
+        starCounterGlowMesh.material.opacity = glowOpacity;
     }
-
-    if (starCounterPointCount < STAR_COUNTER_MAX_POINTS) {
-        for (let i = starCounterPointCount; i < Math.min(STAR_COUNTER_MAX_POINTS, starCounterPointCount + 16); i += 1) {
-            const index3 = i * 3;
-            starCounterColors[index3] = 0;
-            starCounterColors[index3 + 1] = 0;
-            starCounterColors[index3 + 2] = 0;
-        }
-    }
-
-    starCounterGeometry.attributes.position.needsUpdate = true;
-    if (starCounterGeometry.attributes.color) {
-        starCounterGeometry.attributes.color.needsUpdate = true;
-    }
-
-    starCounterPoints.material.opacity = THREE.MathUtils.clamp(0.74 + glowBoost * 0.26, 0.54, 1);
-    starCounterPoints.material.size = counterVoidMode ? 0.56 : 0.38;
 }
 
 function setCounterVoidMode(active) {
@@ -1378,6 +1626,7 @@ function triggerBigBang(nowMs = performance.now()) {
         startedAtMs: nowMs,
         endedAtMs: nowMs + BIG_BANG_RECOVERY_MS
     };
+    bigBangCalmUntilMs = nowMs + BIG_BANG_CALM_MS;
     resetBlackoutCountdownState(false);
     setCounterVoidMode(false);
 
@@ -1436,11 +1685,9 @@ function triggerBigBang(nowMs = performance.now()) {
         }
     }
 
-    if (constellationEntryState) {
-        snapConstellationPayloadToBase(constellationEntryState.dust);
-        snapConstellationPayloadToBase(constellationEntryState.nodes);
-        snapConstellationPayloadToBase(constellationEntryState.linesNear);
-        snapConstellationPayloadToBase(constellationEntryState.linesFar);
+    restartConstellationEntryAfterBigBang(nowMs);
+    if (!constellationEntryState) {
+        loadConstellationFromImage("husospace.png");
     }
 
     singularityCollapse = 0;
@@ -1481,13 +1728,11 @@ function updateBlackoutCountdown(nowMs) {
     if (!blackoutCountdownActive) {
         if (blackoutCountdownArmedAtMs <= 0) {
             blackoutCountdownArmedAtMs = nowMs;
-            setCounterDisplayOverride(10, 10);
+            clearCounterDisplayOverride();
             return;
         }
         if (nowMs - blackoutCountdownArmedAtMs >= BLACKOUT_COUNTDOWN_DELAY_MS) {
             startBlackoutCountdown(nowMs);
-        } else {
-            setCounterDisplayOverride(10, 10);
         }
         return;
     }
@@ -1550,12 +1795,8 @@ function updateBigBang(nowMs) {
 
     // Briefly bloom star brightness while the shockwave expands.
     const burstBoost = Math.max(0, 1 - ringProgress) * 0.42;
-    if (stars && stars.material) {
-        stars.material.opacity = THREE.MathUtils.clamp(0.48 + burstBoost, 0.48, 0.9);
-    }
-    if (deepStars && deepStars.material) {
-        deepStars.material.opacity = THREE.MathUtils.clamp(0.22 + burstBoost * 0.7, 0.22, 0.62);
-    }
+    setStarMaterialOpacity(stars, THREE.MathUtils.clamp(STAR_SHADER_OPACITY + burstBoost, STAR_SHADER_OPACITY, 0.9));
+    setStarMaterialOpacity(deepStars, THREE.MathUtils.clamp(DEEP_STAR_SHADER_OPACITY + burstBoost * 0.7, DEEP_STAR_SHADER_OPACITY, 0.62));
     const shake = Math.max(0, 1 - ringProgress) * 0.22;
     camera.position.x = Math.sin(nowMs * 0.038) * shake;
     camera.position.y = 6 + Math.cos(nowMs * 0.034 + 1.2) * shake;
@@ -1568,12 +1809,8 @@ function updateBigBang(nowMs) {
             bigBangRing.visible = false;
             bigBangRing.material.opacity = 0;
         }
-        if (stars && stars.material) {
-            stars.material.opacity = 0.48;
-        }
-        if (deepStars && deepStars.material) {
-            deepStars.material.opacity = 0.22;
-        }
+        setStarMaterialOpacity(stars, STAR_SHADER_OPACITY);
+        setStarMaterialOpacity(deepStars, DEEP_STAR_SHADER_OPACITY);
         camera.position.set(0, 6, 75);
     }
 }
@@ -1659,8 +1896,8 @@ function extractConstellationTriples(image) {
         lum[i] = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
     }
 
-    const lumThreshold = luminancePercentile(lum, 0.972);
-    const contrastThreshold = 0.0105;
+    const lumThreshold = luminancePercentile(lum, 0.988);
+    const contrastThreshold = 0.018;
     const rawMask = new Uint8Array(pixelCount);
 
     for (let y = 0; y < scanHeight; y += 1) {
@@ -1956,6 +2193,7 @@ function triggerCompanionBurst(nowMs = performance.now()) {
     const positions = new Float32Array(count * 3);
     const velocities = new Float32Array(count * 3);
     const group = companionConstellation.group;
+    const groupScale = Math.max(0.001, group.scale.x || CONSTELLATION_SCALE);
     const center = new THREE.Vector3(
         group.position.x,
         group.position.y,
@@ -1967,8 +2205,8 @@ function triggerCompanionBurst(nowMs = performance.now()) {
         const localX = samples[idx3];
         const localY = samples[idx3 + 1];
         const localZ = samples[idx3 + 2];
-        const worldX = group.position.x + localX * CONSTELLATION_SCALE;
-        const worldY = group.position.y + localY * CONSTELLATION_SCALE;
+        const worldX = group.position.x + localX * groupScale;
+        const worldY = group.position.y + localY * groupScale;
         const worldZ = group.position.z + localZ * 0.1;
 
         positions[idx3] = worldX;
@@ -2071,6 +2309,8 @@ function handleBlackholeBreakByPointer(nowMs = performance.now()) {
     lastPointerMoveMs = nowMs;
     singularityCollapse = 0;
     blackHolePower = 0;
+    bigBangCalmUntilMs = 0;
+    constellationFastEntryUntilMs = 0;
 }
 
 function buildCompanionConstellation(image) {
@@ -2246,13 +2486,13 @@ function buildCompanionConstellation(image) {
     companionConstellationBasePosition.set(
         CONSTELLATION_MOUTH_TARGET_X - mouthLocalX * CONSTELLATION_SCALE,
         CONSTELLATION_MOUTH_TARGET_Y - mouthLocalY * CONSTELLATION_SCALE,
-        CONSTELLATION_TARGET_Z
+        CONSTELLATION_TARGET_Z + COMPANION_Z_OFFSET
     );
 
-    group.scale.set(CONSTELLATION_SCALE, CONSTELLATION_SCALE, 1);
+    group.scale.set(CONSTELLATION_SCALE * COMPANION_SCALE_MULT, CONSTELLATION_SCALE * COMPANION_SCALE_MULT, 1);
     group.position.copy(companionConstellationBasePosition);
-    group.rotation.x = -0.02;
-    group.rotation.z = -0.006;
+    group.rotation.x = CONSTELLATION_DUAL_ROT_X;
+    group.rotation.z = CONSTELLATION_DUAL_ROT_Z;
 
     companionConstellation = {
         group,
@@ -2312,17 +2552,17 @@ function updateCompanionConstellation(nowMs, delta = 1) {
     const visibilityBoost = CONSTELLATION_VISIBILITY_MULT * powerBoost * collapseVisibility * drawFlash * dualBoost;
 
     companionConstellation.dustMaterial.opacity = Math.min(
-        0.46,
-        (0.043 + pulse * 0.013) * fadeProgress * drawProgress * visibilityBoost * CONSTELLATION_DUST_OPACITY_MULT
+        0.58,
+        (0.052 + pulse * 0.016) * fadeProgress * drawProgress * visibilityBoost * CONSTELLATION_DUST_OPACITY_MULT
     );
     companionConstellation.nodeMaterial.opacity = Math.min(
-        0.76,
-        (0.11 + pulse * 0.026) * fadeProgress * drawProgress * visibilityBoost * CONSTELLATION_NODE_OPACITY_MULT
+        0.88,
+        (0.14 + pulse * 0.03) * fadeProgress * drawProgress * visibilityBoost * CONSTELLATION_NODE_OPACITY_MULT
     );
 
     const nearLineOpacity = Math.min(
-        0.52,
-        (0.048 + pulse * 0.014) * fadeProgress * drawProgress * visibilityBoost * CONSTELLATION_LINE_OPACITY_MULT
+        0.72,
+        (0.066 + pulse * 0.022) * fadeProgress * drawProgress * visibilityBoost * CONSTELLATION_LINE_OPACITY_MULT
     );
     if (companionConstellation.nearLineMaterial) {
         companionConstellation.nearLineMaterial.opacity = nearLineOpacity;
@@ -2405,14 +2645,15 @@ function updateCompanionConstellation(nowMs, delta = 1) {
         companionConstellationBasePosition.y,
         companionConstellationBasePosition.z
     );
-    companionConstellation.group.scale.set(CONSTELLATION_SCALE, CONSTELLATION_SCALE, 1);
-    companionConstellation.group.rotation.x = -0.02;
-    companionConstellation.group.rotation.z = -0.006;
+    const companionScale = CONSTELLATION_SCALE * COMPANION_SCALE_MULT;
+    companionConstellation.group.scale.set(companionScale, companionScale, 1);
+    companionConstellation.group.rotation.x = CONSTELLATION_DUAL_ROT_X;
+    companionConstellation.group.rotation.z = CONSTELLATION_DUAL_ROT_Z;
 
     if (collapse > 0.0001) {
         pointerAtZ(companionConstellationBasePosition.z, singularityVectorB);
-        const sinkLocalX = (singularityVectorB.x - companionBaseX) / CONSTELLATION_SCALE;
-        const sinkLocalY = (singularityVectorB.y - companionConstellationBasePosition.y) / CONSTELLATION_SCALE;
+        const sinkLocalX = (singularityVectorB.x - companionBaseX) / companionScale;
+        const sinkLocalY = (singularityVectorB.y - companionConstellationBasePosition.y) / companionScale;
         pullConstellationPayload(companionConstellation.dustPayload, sinkLocalX, sinkLocalY, collapse, delta);
         pullConstellationPayload(companionConstellation.nodePayload, sinkLocalX, sinkLocalY, collapse, delta);
         pullConstellationPayload(companionConstellation.nearLinePayload, sinkLocalX, sinkLocalY, collapse, delta);
@@ -2661,6 +2902,7 @@ function createStars() {
     starTwinklePhase = new Float32Array(starCount);
     starBaseColors = new Float32Array(starCount * 3);
     starTwinkleAmp = new Float32Array(starCount);
+    starSizes = new Float32Array(starCount);
 
     for (let i = 0; i < starCount; i += 1) {
         const index3 = i * 3;
@@ -2674,23 +2916,23 @@ function createStars() {
     const starGeometry = new THREE.BufferGeometry();
     starGeometry.setAttribute("position", new THREE.BufferAttribute(starPositions, 3));
     starGeometry.setAttribute("color", new THREE.BufferAttribute(starColors, 3));
+    starGeometry.setAttribute("aSize", new THREE.BufferAttribute(starSizes, 1));
 
-    const starMaterial = new THREE.PointsMaterial({
-        size: 0.78,
-        sizeAttenuation: true,
-        transparent: true,
-        opacity: 0.48,
-        depthWrite: false,
-        vertexColors: true
-    });
+    const starMaterial = createStarPointShaderMaterial(STAR_SHADER_BASE_SIZE, STAR_SHADER_OPACITY);
 
     stars = new THREE.Points(starGeometry, starMaterial);
     scene.add(stars);
 }
 
 function resetStar(index3, moveToBack, starIndex = Math.floor(index3 / 3)) {
-    starPositions[index3] = (Math.random() - 0.5) * STAR_FIELD_WIDTH;
-    starPositions[index3 + 1] = (Math.random() - 0.5) * STAR_FIELD_HEIGHT;
+    const bandPoint = sampleGalacticAxis(
+        STAR_FIELD_WIDTH,
+        STAR_FIELD_HEIGHT,
+        GALACTIC_BAND_NEAR_RATIO,
+        GALACTIC_BAND_NEAR_SIGMA
+    );
+    starPositions[index3] = bandPoint.x;
+    starPositions[index3 + 1] = bandPoint.y;
 
     if (moveToBack) {
         starPositions[index3 + 2] = -STAR_FIELD_DEPTH * 0.55 - Math.random() * STAR_FIELD_DEPTH * 0.4;
@@ -2715,6 +2957,13 @@ function resetStar(index3, moveToBack, starIndex = Math.floor(index3 / 3)) {
     if (starTwinklePhase) {
         starTwinklePhase[starIndex] = Math.random() * Math.PI * 2;
     }
+    if (starSizes) {
+        let size = 0.56 + Math.pow(Math.random(), 2.4) * 2.35;
+        if (Math.random() < 0.03) {
+            size += 0.9 + Math.random() * 1.3;
+        }
+        starSizes[starIndex] = size;
+    }
 }
 
 function createDeepStars() {
@@ -2724,6 +2973,7 @@ function createDeepStars() {
     deepStarTwinklePhase = new Float32Array(deepStarCount);
     deepStarBaseColors = new Float32Array(deepStarCount * 3);
     deepStarTwinkleAmp = new Float32Array(deepStarCount);
+    deepStarSizes = new Float32Array(deepStarCount);
 
     for (let i = 0; i < deepStarCount; i += 1) {
         const index3 = i * 3;
@@ -2735,15 +2985,9 @@ function createDeepStars() {
     const deepGeometry = new THREE.BufferGeometry();
     deepGeometry.setAttribute("position", new THREE.BufferAttribute(deepStarPositions, 3));
     deepGeometry.setAttribute("color", new THREE.BufferAttribute(deepStarColors, 3));
+    deepGeometry.setAttribute("aSize", new THREE.BufferAttribute(deepStarSizes, 1));
 
-    const deepMaterial = new THREE.PointsMaterial({
-        size: 0.62,
-        sizeAttenuation: true,
-        transparent: true,
-        opacity: 0.22,
-        depthWrite: false,
-        vertexColors: true
-    });
+    const deepMaterial = createStarPointShaderMaterial(DEEP_STAR_SHADER_BASE_SIZE, DEEP_STAR_SHADER_OPACITY);
 
     deepStars = new THREE.Points(deepGeometry, deepMaterial);
     deepStars.renderOrder = 0;
@@ -2751,8 +2995,14 @@ function createDeepStars() {
 }
 
 function resetDeepStar(index3, moveToBack, starIndex = Math.floor(index3 / 3)) {
-    deepStarPositions[index3] = (Math.random() - 0.5) * DEEP_STAR_FIELD_WIDTH;
-    deepStarPositions[index3 + 1] = (Math.random() - 0.5) * DEEP_STAR_FIELD_HEIGHT;
+    const bandPoint = sampleGalacticAxis(
+        DEEP_STAR_FIELD_WIDTH,
+        DEEP_STAR_FIELD_HEIGHT,
+        GALACTIC_BAND_DEEP_RATIO,
+        GALACTIC_BAND_DEEP_SIGMA
+    );
+    deepStarPositions[index3] = bandPoint.x;
+    deepStarPositions[index3 + 1] = bandPoint.y;
 
     if (moveToBack) {
         deepStarPositions[index3 + 2] = -DEEP_STAR_FIELD_DEPTH * 0.58 - Math.random() * DEEP_STAR_FIELD_DEPTH * 0.34;
@@ -2771,6 +3021,9 @@ function resetDeepStar(index3, moveToBack, starIndex = Math.floor(index3 / 3)) {
     deepStarColors[index3 + 2] = THREE.MathUtils.clamp(deepStarBaseColors[index3 + 2] * depthBrightness, 0, 1);
     if (deepStarTwinklePhase) {
         deepStarTwinklePhase[starIndex] = Math.random() * Math.PI * 2;
+    }
+    if (deepStarSizes) {
+        deepStarSizes[starIndex] = 0.42 + Math.pow(Math.random(), 2.6) * 1.2;
     }
 }
 
@@ -3055,12 +3308,140 @@ function createBigBangRingTexture() {
     return texture;
 }
 
+function createRelativisticAccretionMaterial(inner = false) {
+    return new THREE.ShaderMaterial({
+        uniforms: {
+            uTime: { value: 0 },
+            uPower: { value: 0 },
+            uCollapse: { value: 0 },
+            uOpacity: { value: 0 },
+            uInner: { value: inner ? 1 : 0 }
+        },
+        vertexShader: `
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `,
+        fragmentShader: `
+            precision highp float;
+            varying vec2 vUv;
+            uniform float uTime;
+            uniform float uPower;
+            uniform float uCollapse;
+            uniform float uOpacity;
+            uniform float uInner;
+
+            float hash21(vec2 p) {
+                p = fract(p * vec2(123.34, 456.21));
+                p += dot(p, p + 34.45);
+                return fract(p.x * p.y);
+            }
+
+            float noise2(vec2 p) {
+                vec2 i = floor(p);
+                vec2 f = fract(p);
+                float a = hash21(i);
+                float b = hash21(i + vec2(1.0, 0.0));
+                float c = hash21(i + vec2(0.0, 1.0));
+                float d = hash21(i + vec2(1.0, 1.0));
+                vec2 u = f * f * (3.0 - 2.0 * f);
+                return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+            }
+
+            void main() {
+                vec2 p = vUv * 2.0 - 1.0;
+                float r = length(p);
+                float ang = atan(p.y, p.x);
+
+                float innerR = mix(0.22, 0.17, uInner);
+                float ringR = mix(0.58, 0.45, uInner);
+                float ringW = mix(0.16, 0.11, uInner);
+                float ring = exp(-pow((r - ringR) / max(0.001, ringW), 2.0) * 2.8);
+
+                float shearA = sin(ang * (22.0 + uInner * 8.0) + uTime * (2.0 + uInner * 1.6) + r * 44.0);
+                float shearB = cos(ang * (17.0 + uInner * 7.0) - uTime * (1.8 + uInner * 1.2) + r * 35.0);
+                float turbulence = noise2(p * (7.0 + uInner * 4.0) + vec2(uTime * 0.25, -uTime * 0.19));
+                float streak = smoothstep(0.02, 0.98, shearA * 0.45 + shearB * 0.25 + turbulence * 0.7);
+
+                float beaming = pow(clamp(0.5 + 0.5 * cos(ang - uTime * 0.42 + uInner * 0.5), 0.0, 1.0), 1.7);
+                float horizon = smoothstep(innerR, innerR + 0.06, r);
+                float outerFade = 1.0 - smoothstep(0.93, 1.08, r);
+
+                float intensity = ring * streak * horizon * outerFade;
+                intensity *= 0.56 + beaming * 0.95 + uPower * 0.32 + uCollapse * 0.22;
+                intensity *= mix(0.9, 1.2, uInner);
+
+                vec3 cool = vec3(0.56, 0.72, 1.0);
+                vec3 warm = vec3(1.0, 0.72, 0.34);
+                vec3 hot = vec3(1.0, 0.92, 0.72);
+                vec3 color = mix(cool, warm, clamp(beaming * 0.84 + uPower * 0.22, 0.0, 1.0));
+                color = mix(color, hot, clamp(0.2 + uInner * 0.42 + uPower * 0.16, 0.0, 1.0));
+
+                float alpha = clamp(intensity * uOpacity, 0.0, 1.0);
+                gl_FragColor = vec4(color * alpha, alpha);
+            }
+        `,
+        transparent: true,
+        depthWrite: false,
+        depthTest: false,
+        blending: THREE.AdditiveBlending
+    });
+}
+
+function createPhotonRingShaderMaterial() {
+    return new THREE.ShaderMaterial({
+        uniforms: {
+            uTime: { value: 0 },
+            uPower: { value: 0 },
+            uCollapse: { value: 0 },
+            uOpacity: { value: 0 }
+        },
+        vertexShader: `
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `,
+        fragmentShader: `
+            precision highp float;
+            varying vec2 vUv;
+            uniform float uTime;
+            uniform float uPower;
+            uniform float uCollapse;
+            uniform float uOpacity;
+
+            void main() {
+                vec2 p = vUv * 2.0 - 1.0;
+                float r = length(p);
+                float ang = atan(p.y, p.x);
+
+                float ring = exp(-pow((r - 0.62) / 0.06, 2.0) * 4.0);
+                float beam = pow(clamp(0.5 + 0.5 * cos(ang - uTime * 0.35), 0.0, 1.0), 2.1);
+                float shimmer = 0.78 + sin(ang * 12.0 + uTime * 4.1) * 0.22;
+                float intensity = ring * (0.62 + beam * 0.92) * shimmer;
+                intensity *= 1.0 + uPower * 0.28 + uCollapse * 0.18;
+                intensity *= uOpacity;
+
+                vec3 warm = vec3(1.0, 0.84, 0.58);
+                vec3 cool = vec3(0.72, 0.86, 1.0);
+                vec3 color = mix(cool, warm, beam * 0.86);
+                float alpha = clamp(intensity, 0.0, 1.0);
+                gl_FragColor = vec4(color * alpha, alpha);
+            }
+        `,
+        transparent: true,
+        depthWrite: false,
+        depthTest: false,
+        blending: THREE.AdditiveBlending
+    });
+}
+
 function createBlackHoleVisual() {
     const holeTexture = createBlackHoleTexture();
     const lensTexture = createBlackHoleLensingTexture();
-    const diskTexture = createAccretionDiskTexture(1, 0.58);
-    const innerDiskTexture = createAccretionDiskTexture(7, 0.96);
-    const photonRingTexture = createPhotonRingTexture();
     const bigBangRingTexture = createBigBangRingTexture();
     blackHoleCore = new THREE.Mesh(
         new THREE.PlaneGeometry(2, 2),
@@ -3091,15 +3472,7 @@ function createBlackHoleVisual() {
 
     blackHoleAccretionDisk = new THREE.Mesh(
         new THREE.PlaneGeometry(2, 2),
-        new THREE.MeshBasicMaterial({
-            map: diskTexture,
-            color: 0xffe0ae,
-            transparent: true,
-            opacity: 0,
-            depthWrite: false,
-            depthTest: false,
-            blending: THREE.AdditiveBlending
-        })
+        createRelativisticAccretionMaterial(false)
     );
     blackHoleAccretionDisk.renderOrder = 96;
     blackHoleAccretionDisk.position.set(0, 0, 3);
@@ -3108,15 +3481,7 @@ function createBlackHoleVisual() {
 
     blackHoleAccretionInnerDisk = new THREE.Mesh(
         new THREE.PlaneGeometry(2, 2),
-        new THREE.MeshBasicMaterial({
-            map: innerDiskTexture,
-            color: 0xfff3d2,
-            transparent: true,
-            opacity: 0,
-            depthWrite: false,
-            depthTest: false,
-            blending: THREE.AdditiveBlending
-        })
+        createRelativisticAccretionMaterial(true)
     );
     blackHoleAccretionInnerDisk.renderOrder = 97;
     blackHoleAccretionInnerDisk.position.set(0, 0, 3);
@@ -3125,14 +3490,7 @@ function createBlackHoleVisual() {
 
     blackHolePhotonRing = new THREE.Mesh(
         new THREE.PlaneGeometry(2, 2),
-        new THREE.MeshBasicMaterial({
-            map: photonRingTexture,
-            transparent: true,
-            opacity: 0,
-            depthWrite: false,
-            depthTest: false,
-            blending: THREE.AdditiveBlending
-        })
+        createPhotonRingShaderMaterial()
     );
     blackHolePhotonRing.renderOrder = 101;
     blackHolePhotonRing.position.set(0, 0, 3);
@@ -4112,7 +4470,8 @@ function pointerAtZ(zValue, target) {
 }
 
 function updateBlackHole(delta, nowMs) {
-    const idleMs = nowMs - lastPointerMoveMs;
+    const calmActive = nowMs < bigBangCalmUntilMs;
+    const idleMs = calmActive ? 0 : (nowMs - lastPointerMoveMs);
     let targetRadius = 0;
     let targetPower = 0;
     let collapseTarget = 0;
@@ -4211,17 +4570,20 @@ function updateBlackHole(delta, nowMs) {
         blackHoleAccretionDisk.scale.set(diskScale, diskScale * flatten, 1);
 
         const beaming = 0.5 + 0.5 * Math.sin(nowMs * 0.0029 + blackHolePower * 0.72);
-        blackHoleAccretionDisk.material.opacity = THREE.MathUtils.clamp(
+        const diskOpacity = THREE.MathUtils.clamp(
             (BLACKHOLE_DISK_OPACITY_BASE + blackHolePower * BLACKHOLE_DISK_OPACITY_POWER_MULT) *
             (0.78 + beaming * 0.4 + collapse * 0.22),
             0,
             0.92
         );
-        blackHoleAccretionDisk.material.color.setRGB(
-            1,
-            0.72 + beaming * 0.18,
-            0.46 + (1 - beaming) * 0.18
-        );
+        if (blackHoleAccretionDisk.material.uniforms) {
+            blackHoleAccretionDisk.material.uniforms.uTime.value = nowMs * 0.001;
+            blackHoleAccretionDisk.material.uniforms.uPower.value = blackHolePower;
+            blackHoleAccretionDisk.material.uniforms.uCollapse.value = collapse;
+            blackHoleAccretionDisk.material.uniforms.uOpacity.value = diskOpacity;
+        } else {
+            blackHoleAccretionDisk.material.opacity = diskOpacity;
+        }
     }
 
     if (blackHoleAccretionInnerDisk) {
@@ -4235,13 +4597,20 @@ function updateBlackHole(delta, nowMs) {
 
         const innerScale = visualRadius * BLACKHOLE_DISK_INNER_SCALE_MULT * (1 + blackHolePower * 0.18 + collapse * 0.45);
         blackHoleAccretionInnerDisk.scale.set(innerScale, innerScale * (flatten * 0.9), 1);
-        blackHoleAccretionInnerDisk.material.opacity = THREE.MathUtils.clamp(
+        const innerOpacity = THREE.MathUtils.clamp(
             (BLACKHOLE_DISK_OPACITY_BASE * 0.9 + blackHolePower * BLACKHOLE_DISK_OPACITY_POWER_MULT * 0.78) *
             (0.82 + Math.sin(nowMs * 0.0064 + 1.6) * 0.18 + collapse * 0.24),
             0,
             0.9
         );
-        blackHoleAccretionInnerDisk.material.color.setRGB(1, 0.9, 0.74 + Math.sin(nowMs * 0.0042) * 0.05);
+        if (blackHoleAccretionInnerDisk.material.uniforms) {
+            blackHoleAccretionInnerDisk.material.uniforms.uTime.value = nowMs * 0.001;
+            blackHoleAccretionInnerDisk.material.uniforms.uPower.value = blackHolePower;
+            blackHoleAccretionInnerDisk.material.uniforms.uCollapse.value = collapse;
+            blackHoleAccretionInnerDisk.material.uniforms.uOpacity.value = innerOpacity;
+        } else {
+            blackHoleAccretionInnerDisk.material.opacity = innerOpacity;
+        }
     }
 
     if (blackHolePhotonRing) {
@@ -4255,13 +4624,21 @@ function updateBlackHole(delta, nowMs) {
 
         const ringScale = visualRadius * BLACKHOLE_PHOTON_RING_SCALE_MULT * (1 + blackHolePower * 0.12 + collapse * 0.52);
         blackHolePhotonRing.scale.set(ringScale, ringScale * (0.9 + Math.sin(nowMs * 0.0022) * 0.04), 1);
-        blackHolePhotonRing.material.opacity = THREE.MathUtils.clamp(
+        const ringOpacity = THREE.MathUtils.clamp(
             (BLACKHOLE_PHOTON_RING_OPACITY_BASE + blackHolePower * BLACKHOLE_PHOTON_RING_OPACITY_POWER_MULT) *
             timePulse *
             (1 + collapse * 0.4),
             0,
             0.94
         );
+        if (blackHolePhotonRing.material.uniforms) {
+            blackHolePhotonRing.material.uniforms.uTime.value = nowMs * 0.001;
+            blackHolePhotonRing.material.uniforms.uPower.value = blackHolePower;
+            blackHolePhotonRing.material.uniforms.uCollapse.value = collapse;
+            blackHolePhotonRing.material.uniforms.uOpacity.value = ringOpacity;
+        } else {
+            blackHolePhotonRing.material.opacity = ringOpacity;
+        }
     }
 
     if (singularityOverlay) {
@@ -4755,6 +5132,90 @@ function snapConstellationPayloadToBase(payload) {
     payload.attribute.needsUpdate = true;
 }
 
+function restartConstellationEntryAfterBigBang(nowMs = performance.now()) {
+    if (!constellationEntryState) {
+        return;
+    }
+
+    const resetPayload = (payload, centerSpawn) => {
+        if (!payload || !payload.live || !payload.attribute) {
+            return;
+        }
+
+        if (payload.base && payload.base.length === payload.live.length) {
+            if (centerSpawn) {
+                const count = Math.max(1, payload.count || Math.floor(payload.live.length / 3));
+                for (let i = 0; i < count; i += 1) {
+                    const index3 = i * 3;
+                    const baseX = payload.base[index3];
+                    const baseY = payload.base[index3 + 1];
+                    const baseZ = payload.base[index3 + 2];
+                    const angle = Math.atan2(baseY, baseX) + THREE.MathUtils.randFloatSpread(0.7);
+                    const radius = THREE.MathUtils.randFloat(2.4, 20);
+
+                    payload.live[index3] = Math.cos(angle) * radius;
+                    payload.live[index3 + 1] = Math.sin(angle) * radius;
+                    payload.live[index3 + 2] = baseZ + THREE.MathUtils.randFloatSpread(12);
+
+                    if (payload.start && payload.start.length === payload.live.length) {
+                        payload.start[index3] = payload.live[index3];
+                        payload.start[index3 + 1] = payload.live[index3 + 1];
+                        payload.start[index3 + 2] = payload.live[index3 + 2];
+                    }
+
+                    if (payload.delays && i < payload.delays.length) {
+                        const stagger = (i / count) * (CONSTELLATION_ENTRY_STAGGER_MS * 1.65);
+                        payload.delays[i] = stagger + THREE.MathUtils.randFloat(60, 820);
+                    }
+                }
+            } else {
+                payload.live.set(payload.base);
+                if (payload.start && payload.start.length === payload.live.length) {
+                    payload.start.set(payload.base);
+                }
+                if (payload.delays) {
+                    payload.delays.fill(0);
+                }
+            }
+        }
+        payload.attribute.needsUpdate = true;
+
+        if (payload.completed) {
+            payload.completed.fill(0);
+        }
+    };
+
+    resetPayload(constellationEntryState.dust, true);
+    resetPayload(constellationEntryState.nodes, true);
+    resetPayload(constellationEntryState.linesNear, false);
+    resetPayload(constellationEntryState.linesFar, false);
+
+    const resetLinePayload = (payload) => {
+        if (!payload) {
+            return;
+        }
+
+        payload.revealedSegments = 0;
+        payload.strokeDrawOpacity = 0;
+        if (payload.geometry) {
+            payload.geometry.setDrawRange(0, 0);
+        }
+        if (payload.strokeLine) {
+            payload.strokeLine.visible = false;
+        }
+    };
+
+    resetLinePayload(constellationEntryState.linesNear);
+    resetLinePayload(constellationEntryState.linesFar);
+
+    constellationReadyAtMs = nowMs;
+    constellationFastEntryUntilMs = nowMs + CONSTELLATION_BIGBANG_ENTRY_FAST_MS;
+    constellationSparkleStartedAtMs = 0;
+    constellationSparkleEndAtMs = 0;
+    scheduleNextConstellationSparkle(nowMs + CONSTELLATION_ENTRY_FLASH_MS);
+    constellationEntryState.active = true;
+}
+
 function updateConstellation(nowMs, delta = 1) {
     if (!constellationGroup || !constellationDustMaterial || !constellationNodeMaterial) {
         return;
@@ -4842,20 +5303,21 @@ function updateConstellation(nowMs, delta = 1) {
     const primaryBaseZ = constellationBasePosition.z;
 
     constellationGroup.position.set(primaryBaseX, primaryBaseY, primaryBaseZ);
-    constellationGroup.scale.set(CONSTELLATION_SCALE, CONSTELLATION_SCALE, 1);
-    constellationGroup.rotation.x = -0.02;
-    constellationGroup.rotation.z = -0.006;
+    const primaryScale = dualConstellationActive ? CONSTELLATION_SCALE * 1.06 : CONSTELLATION_SCALE;
+    constellationGroup.scale.set(primaryScale, primaryScale, 1);
+    constellationGroup.rotation.x = dualConstellationActive ? CONSTELLATION_DUAL_ROT_X : -0.02;
+    constellationGroup.rotation.z = dualConstellationActive ? CONSTELLATION_DUAL_ROT_Z : -0.006;
 
     if (collapse > 0.0001 && constellationEntryState) {
         pointerAtZ(primaryBaseZ, singularityVectorB);
-        const sinkLocalX = (singularityVectorB.x - primaryBaseX) / CONSTELLATION_SCALE;
-        const sinkLocalY = (singularityVectorB.y - primaryBaseY) / CONSTELLATION_SCALE;
+        const sinkLocalX = (singularityVectorB.x - primaryBaseX) / primaryScale;
+        const sinkLocalY = (singularityVectorB.y - primaryBaseY) / primaryScale;
 
         pullConstellationPayload(constellationEntryState.dust, sinkLocalX, sinkLocalY, collapse, delta);
         pullConstellationPayload(constellationEntryState.nodes, sinkLocalX, sinkLocalY, collapse, delta);
         pullConstellationPayload(constellationEntryState.linesNear, sinkLocalX, sinkLocalY, collapse, delta);
         pullConstellationPayload(constellationEntryState.linesFar, sinkLocalX, sinkLocalY, collapse, delta);
-    } else if (constellationEntryState) {
+    } else if (constellationEntryState && !constellationEntryState.active) {
         restoreConstellationPayload(constellationEntryState.dust, delta, 0.17);
         restoreConstellationPayload(constellationEntryState.nodes, delta, 0.17);
         restoreConstellationPayload(constellationEntryState.linesNear, delta, 0.2);
