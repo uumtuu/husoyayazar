@@ -207,12 +207,12 @@ const DEEP_STAR_NEAR_BRIGHTNESS = 0.9;
 const DEEP_STAR_FAR_BRIGHTNESS = 0.34;
 const STAR_GRAV_LENS_COLOR_SHIFT = 0.24;
 const STAR_DOPPLER_COLOR_SHIFT = 0.18;
-const STAR_PASSIVE_INFLUENCE_RADIUS = 118;
-const FOOD_PASSIVE_INFLUENCE_RADIUS = 136;
+const STAR_PASSIVE_INFLUENCE_RADIUS = 16;
+const FOOD_PASSIVE_INFLUENCE_RADIUS = 20;
 const STAR_SHADER_BASE_SIZE = 1.05;
 const DEEP_STAR_SHADER_BASE_SIZE = 0.84;
-const STAR_SHADER_OPACITY = 0.56;
-const DEEP_STAR_SHADER_OPACITY = 0.27;
+const STAR_SHADER_OPACITY = 0.68;
+const DEEP_STAR_SHADER_OPACITY = 0.36;
 const GALACTIC_BAND_NEAR_RATIO = 0.74;
 const GALACTIC_BAND_DEEP_RATIO = 0.66;
 const GALACTIC_BAND_NEAR_SIGMA = 0.2;
@@ -1321,10 +1321,10 @@ function drawCounterSevenSegmentCanvas(valueText, voidMode, styleVariant) {
         const ty = dy / len;
         const nx = -ty;
         const ny = tx;
-        const dashLen = voidMode ? 36 : 18;
-        const gapLen = voidMode ? 16 : 9;
-        const baseLine = voidMode ? 2.0 : 1.25;
-        const haloLine = voidMode ? 4.6 : 2.8;
+        const dashLen = voidMode ? 42 : 24;
+        const gapLen = voidMode ? 14 : 7;
+        const baseLine = voidMode ? 2.6 : 1.9;
+        const haloLine = voidMode ? 6.2 : 4.3;
 
         let cursor = 0;
         let dashIndex = 0;
@@ -1360,7 +1360,7 @@ function drawCounterSevenSegmentCanvas(valueText, voidMode, styleVariant) {
                 const jitter = (seededUnit(seed * 19.41 + dashIndex * 7.37 + p * 2.31) - 0.5) * (voidMode ? 1.6 : 0.8);
                 const x = px + nx * jitter;
                 const y = py + ny * jitter;
-                const coreR = (voidMode ? 1.55 : 1.0) * (0.78 + seededUnit(seed * 31.77 + dashIndex * 11.23 + p * 3.17) * 0.44);
+                const coreR = (voidMode ? 1.75 : 1.22) * (0.78 + seededUnit(seed * 31.77 + dashIndex * 11.23 + p * 3.17) * 0.44);
                 const glowR = coreR * (voidMode ? 3.4 : 2.7);
                 const grad = ctx.createRadialGradient(x, y, 0, x, y, glowR);
                 grad.addColorStop(0, starCore);
@@ -1388,7 +1388,7 @@ function drawCounterSevenSegmentCanvas(valueText, voidMode, styleVariant) {
         }
     }
 
-    const ambientCount = voidMode ? 170 : 54;
+    const ambientCount = voidMode ? 220 : 72;
     counterDrawTmpColor.setHSL(hue / 360, 0.2, 0.74);
     ctx.fillStyle = counterColorToRgba(counterDrawTmpColor, voidMode ? 0.12 : 0.08);
     for (let i = 0; i < ambientCount; i += 1) {
