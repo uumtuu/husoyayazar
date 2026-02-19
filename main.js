@@ -74,7 +74,11 @@ const SINGULARITY_MAX_OVERLAY_OPACITY = 0.996;
 const SINGULARITY_PULL_FORCE = 320;
 const SINGULARITY_CAPTURE_RADIUS_MAX = 220;
 const BLACKHOLE_FOOD_LAUNCH_GRACE_MS = 620;
-const SPACE_COUNTER_TARGET = 500;
+const SPACE_COUNTER_TARGET = 10;
+const STAR_COUNTER_WORLD_Z = 6;
+const STAR_COUNTER_MARGIN_X = 22;
+const STAR_COUNTER_MARGIN_Y = 11;
+const STAR_COUNTER_WORLD_SCALE = 36;
 const DUAL_CONSTELLATION_SPLIT_X = 430;
 const DUAL_CONSTELLATION_SLIDE_MS = 3600;
 const COMPANION_CONSTELLATION_FADE_MS = 1300;
@@ -264,8 +268,12 @@ let touchHoldActivated = false;
 let powerAnchorClientX = null;
 let powerAnchorClientY = null;
 let spaceLaunchCount = 0;
-let starCounterElement = null;
-let starCounterValueElement = null;
+let starCounterGroup = null;
+let starCounterTextSprite = null;
+let starCounterTexture = null;
+let starCounterCanvas = null;
+let starCounterContext = null;
+let starCounterSparkleMaterials = [];
 let starCounterGlowUntilMs = 0;
 let dualConstellationActive = false;
 let dualConstellationActivatedAtMs = 0;
@@ -802,79 +810,179 @@ function resolvePerformanceProfile() {
 }
 
 function createStarCounterUI() {
-    if (starCounterElement || !document.body) {
+    if (starCounterGroup || !scene) {
         return;
     }
 
-    const root = document.createElement("div");
-    root.setAttribute("aria-hidden", "true");
-    Object.assign(root.style, {
-        position: "fixed",
-        top: "12px",
-        right: "14px",
-        zIndex: "90",
-        pointerEvents: "none",
-        userSelect: "none",
-        padding: "6px 10px",
-        borderRadius: "999px",
-        border: "1px solid rgba(160, 205, 255, 0.24)",
-        background: "rgba(8, 14, 24, 0.24)",
-        color: "rgba(225, 240, 255, 0.9)",
-        fontFamily: "\"Trebuchet MS\", \"Segoe UI\", sans-serif",
-        fontSize: "12px",
-        letterSpacing: "0.55px",
-        lineHeight: "1"
+    starCounterCanvas = document.createElement("canvas");
+    starCounterCanvas.width = 320;
+    starCounterCanvas.height = 96;
+    starCounterContext = starCounterCanvas.getContext("2d");
+    if (!starCounterContext) {
+        return;
+    }
+
+    starCounterTexture = new THREE.CanvasTexture(starCounterCanvas);
+    starCounterTexture.minFilter = THREE.LinearFilter;
+    starCounterTexture.magFilter = THREE.LinearFilter;
+
+    const group = new THREE.Group();
+    const textMaterial = new THREE.SpriteMaterial({
+        map: starCounterTexture,
+        transparent: true,
+        opacity: 0.78,
+        depthWrite: false,
+        depthTest: false
     });
+    const textSprite = new THREE.Sprite(textMaterial);
+    textSprite.scale.set(34, 10, 1);
+    textSprite.renderOrder = 1100;
+    group.add(textSprite);
 
-    const stars = document.createElement("span");
-    stars.textContent = "✦✧ ";
-    stars.style.opacity = "0.85";
-    root.appendChild(stars);
+    const sparkleCanvas = document.createElement("canvas");
+    sparkleCanvas.width = 48;
+    sparkleCanvas.height = 48;
+    const sparkleCtx = sparkleCanvas.getContext("2d");
+    if (sparkleCtx) {
+        const gradient = sparkleCtx.createRadialGradient(24, 24, 0, 24, 24, 24);
+        gradient.addColorStop(0, "rgba(255,255,255,0.98)");
+        gradient.addColorStop(0.34, "rgba(212,236,255,0.8)");
+        gradient.addColorStop(1, "rgba(0,0,0,0)");
+        sparkleCtx.fillStyle = gradient;
+        sparkleCtx.fillRect(0, 0, 48, 48);
+    }
+    const sparkleTexture = new THREE.CanvasTexture(sparkleCanvas);
+    sparkleTexture.minFilter = THREE.LinearFilter;
+    sparkleTexture.magFilter = THREE.LinearFilter;
+    starCounterSparkleMaterials = [];
 
-    const value = document.createElement("span");
-    value.style.fontWeight = "700";
-    value.style.minWidth = "40px";
-    value.style.display = "inline-block";
-    value.style.textAlign = "right";
-    root.appendChild(value);
-    starCounterValueElement = value;
+    const sparkleCount = 8;
+    for (let i = 0; i < sparkleCount; i += 1) {
+        const material = new THREE.SpriteMaterial({
+            map: sparkleTexture,
+            color: new THREE.Color(0xd8ebff),
+            transparent: true,
+            opacity: 0.32,
+            depthWrite: false,
+            depthTest: false,
+            blending: THREE.AdditiveBlending
+        });
+        const sparkle = new THREE.Sprite(material);
+        const side = i % 2 === 0 ? 1 : -1;
+        sparkle.position.set(
+            side * (8.4 + Math.random() * 7.8),
+            (Math.random() - 0.5) * 6.4,
+            0
+        );
+        const scale = 0.95 + Math.random() * 1.3;
+        sparkle.scale.set(scale, scale, 1);
+        sparkle.userData = {
+            baseX: sparkle.position.x,
+            baseY: sparkle.position.y,
+            phase: Math.random() * Math.PI * 2,
+            speed: 0.0016 + Math.random() * 0.0024,
+            baseOpacity: 0.18 + Math.random() * 0.2
+        };
+        sparkle.renderOrder = 1098;
+        group.add(sparkle);
+        starCounterSparkleMaterials.push(material);
+    }
 
-    const goal = document.createElement("span");
-    goal.textContent = ` / ${SPACE_COUNTER_TARGET}`;
-    goal.style.opacity = "0.64";
-    root.appendChild(goal);
-
-    starCounterElement = root;
+    starCounterGroup = group;
+    starCounterTextSprite = textSprite;
     updateStarCounterDisplay();
-    document.body.appendChild(root);
+    scene.add(group);
 }
 
 function updateStarCounterDisplay() {
-    if (!starCounterValueElement) {
+    if (!starCounterContext || !starCounterCanvas || !starCounterTexture) {
         return;
     }
 
-    const value = String(spaceLaunchCount).padStart(3, "0");
-    starCounterValueElement.textContent = value;
-    if (spaceLaunchCount >= SPACE_COUNTER_TARGET) {
-        starCounterValueElement.style.color = "rgba(255, 228, 164, 0.98)";
-    } else {
-        starCounterValueElement.style.color = "rgba(222, 242, 255, 0.96)";
-    }
+    const ctx = starCounterContext;
+    const width = starCounterCanvas.width;
+    const height = starCounterCanvas.height;
+    const radius = 22;
+    const valueDigits = Math.max(2, String(SPACE_COUNTER_TARGET).length);
+    const value = String(spaceLaunchCount).padStart(valueDigits, "0");
+    const target = String(SPACE_COUNTER_TARGET).padStart(valueDigits, "0");
+
+    ctx.clearRect(0, 0, width, height);
+    ctx.beginPath();
+    ctx.moveTo(radius, 10);
+    ctx.lineTo(width - radius, 10);
+    ctx.quadraticCurveTo(width - 10, 10, width - 10, 10 + radius);
+    ctx.lineTo(width - 10, height - 10 - radius);
+    ctx.quadraticCurveTo(width - 10, height - 10, width - 10 - radius, height - 10);
+    ctx.lineTo(10 + radius, height - 10);
+    ctx.quadraticCurveTo(10, height - 10, 10, height - 10 - radius);
+    ctx.lineTo(10, 10 + radius);
+    ctx.quadraticCurveTo(10, 10, 10 + radius, 10);
+    ctx.closePath();
+
+    const glow = ctx.createLinearGradient(0, 0, width, 0);
+    glow.addColorStop(0, "rgba(10,16,30,0.08)");
+    glow.addColorStop(0.55, "rgba(20,34,58,0.2)");
+    glow.addColorStop(1, "rgba(10,16,30,0.08)");
+    ctx.fillStyle = glow;
+    ctx.fill();
+    ctx.strokeStyle = "rgba(146, 196, 244, 0.3)";
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+
+    ctx.font = "600 30px \"Trebuchet MS\", \"Segoe UI\", sans-serif";
+    ctx.fillStyle = "rgba(214,236,255,0.9)";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillText("* *", 28, 50);
+
+    ctx.font = "700 27px \"Trebuchet MS\", \"Segoe UI\", sans-serif";
+    ctx.fillStyle = spaceLaunchCount >= SPACE_COUNTER_TARGET
+        ? "rgba(255, 230, 170, 0.98)"
+        : "rgba(225, 242, 255, 0.96)";
+    ctx.fillText(`${value} / ${target}`, 106, 50);
+
+    starCounterTexture.needsUpdate = true;
 }
 
 function updateStarCounterVisual(nowMs) {
-    if (!starCounterElement) {
+    if (!starCounterGroup || !camera) {
         return;
     }
+
+    const { halfWidth, halfHeight } = getPlaneHalfExtentsAtZ(STAR_COUNTER_WORLD_Z);
+    starCounterGroup.position.set(
+        camera.position.x + halfWidth - STAR_COUNTER_MARGIN_X,
+        camera.position.y + halfHeight - STAR_COUNTER_MARGIN_Y,
+        STAR_COUNTER_WORLD_Z
+    );
+    starCounterGroup.quaternion.copy(camera.quaternion);
+    starCounterGroup.scale.set(STAR_COUNTER_WORLD_SCALE / 36, STAR_COUNTER_WORLD_SCALE / 36, 1);
 
     const twinkle = 0.72 + Math.sin(nowMs * 0.0037 + 0.4) * 0.12 + Math.sin(nowMs * 0.0064 + 1.8) * 0.06;
     const glowLeft = Math.max(0, starCounterGlowUntilMs - nowMs);
     const glowBoost = glowLeft > 0 ? THREE.MathUtils.clamp(glowLeft / 360, 0, 1) : 0;
     const opacity = THREE.MathUtils.clamp(twinkle + glowBoost * 0.35, 0.45, 1);
-    starCounterElement.style.opacity = opacity.toFixed(3);
-    starCounterElement.style.boxShadow = `0 0 ${8 + glowBoost * 16}px rgba(124, 188, 255, ${0.12 + glowBoost * 0.32})`;
-    starCounterElement.style.textShadow = `0 0 ${5 + glowBoost * 10}px rgba(206, 234, 255, ${0.24 + glowBoost * 0.42})`;
+
+    if (starCounterTextSprite && starCounterTextSprite.material) {
+        starCounterTextSprite.material.opacity = opacity;
+    }
+
+    for (let i = 0; i < starCounterGroup.children.length; i += 1) {
+        const child = starCounterGroup.children[i];
+        if (!child.userData || child === starCounterTextSprite || !child.material) {
+            continue;
+        }
+        const state = child.userData;
+        child.position.x = state.baseX + Math.sin(nowMs * state.speed + state.phase) * 0.5;
+        child.position.y = state.baseY + Math.cos(nowMs * state.speed * 1.17 + state.phase) * 0.32;
+        const sparkle = 0.6 + Math.sin(nowMs * state.speed * 1.42 + state.phase * 1.6) * 0.4;
+        child.material.opacity = THREE.MathUtils.clamp(
+            state.baseOpacity * sparkle * (0.8 + glowBoost * 0.8),
+            0.06,
+            0.85
+        );
+    }
 }
 
 function updateDualConstellationProgress(nowMs) {
