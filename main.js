@@ -17,7 +17,7 @@ const foods = [
     "ıslak hamburger"
 ];
 
-const BUILD_ID = "20260219-constellation-v23-refined-dual-counter-gravity";
+const BUILD_ID = "20260219-constellation-v24-void-countdown-bigbang";
 
 const BASE_STAR_COUNT = 22000;
 const MIN_STAR_COUNT = 7000;
@@ -88,6 +88,13 @@ const STAR_COUNTER_DIGIT_HEIGHT = 15.8;
 const STAR_COUNTER_DIGIT_GAP = 2.8;
 const STAR_COUNTER_SEGMENT_POINT_STEP = 0.52;
 const STAR_COUNTER_VOID_SCALE = 2.28;
+const VOID_COUNTDOWN_ARM_MS = 900;
+const VOID_COUNTDOWN_STEP_MS = 260;
+const BIG_BANG_FLASH_MS = 1700;
+const BIG_BANG_STAR_BURST_MIN = 2.4;
+const BIG_BANG_STAR_BURST_MAX = 8.8;
+const BIG_BANG_DEEP_BURST_MIN = 1.2;
+const BIG_BANG_DEEP_BURST_MAX = 4.8;
 const DUAL_CONSTELLATION_SPLIT_X = 430;
 const DUAL_CONSTELLATION_SLIDE_MS = 3600;
 const COMPANION_CONSTELLATION_FADE_MS = 1300;
@@ -227,6 +234,7 @@ let blackHoleAccretionDisk;
 let blackHoleAccretionInnerDisk;
 let blackHolePhotonRing;
 let singularityOverlay;
+let bigBangFlash;
 let blackHoleRadius = MIN_BLACKHOLE_RADIUS;
 let blackHolePulse = 0;
 let blackHolePower = 0;
@@ -296,13 +304,23 @@ let starCounterTransitionStartedMs = 0;
 let starCounterTransitionUntilMs = 0;
 let starCounterLastSignature = "";
 let starCounterGlowUntilMs = 0;
+let starCounterDisplayText = "0";
 let counterVoidMode = false;
+let voidCounterPrimed = false;
+let voidCountdownActive = false;
+let voidCountdownValue = 0;
+let voidCountdownNextAtMs = 0;
+let lastBlackoutSpacePressMs = 0;
+let bigBangState = null;
 let dualConstellationActive = false;
 let dualConstellationActivatedAtMs = 0;
 let dualConstellationProgress = 0;
 let pendingCompanionFromBlackout = false;
 let companionSpawnedFromBlackout = false;
 const companionBursts = [];
+const counterSourceWorld = new THREE.Vector3();
+const counterSourceLocal = new THREE.Vector3();
+const counterQuatInverse = new THREE.Quaternion();
 
 function getPlaneHalfExtentsAtZ(zValue) {
     if (!camera) {
@@ -973,6 +991,66 @@ function buildStarCounterTargetTriples(valueText, voidMode) {
     return sampled;
 }
 
+function getCounterGlyphSize(valueText, voidMode) {
+    const scale = voidMode ? STAR_COUNTER_VOID_SCALE : 1;
+    const text = String(valueText && valueText.length ? valueText : "0");
+    const digitCount = Math.max(1, text.length);
+    return {
+        width: (digitCount * STAR_COUNTER_DIGIT_WIDTH + Math.max(0, digitCount - 1) * STAR_COUNTER_DIGIT_GAP) * scale,
+        height: STAR_COUNTER_DIGIT_HEIGHT * scale
+    };
+}
+
+function seedCounterPointFromScene(index3, tx, ty, tz, voidMode) {
+    const hasNearStars = Boolean(starPositions && starCount > 0);
+    const hasDeepStars = Boolean(deepStarPositions && deepStarCount > 0);
+
+    if (!starCounterGroup || (!hasNearStars && !hasDeepStars)) {
+        const spawnSpread = voidMode ? 2.6 : 1.1;
+        starCounterPositions[index3] = tx + THREE.MathUtils.randFloatSpread(spawnSpread);
+        starCounterPositions[index3 + 1] = ty + THREE.MathUtils.randFloatSpread(spawnSpread);
+        starCounterPositions[index3 + 2] = tz + THREE.MathUtils.randFloatSpread(0.8);
+        return;
+    }
+
+    const useDeep = hasDeepStars && (!hasNearStars || Math.random() < 0.34);
+    if (useDeep) {
+        const starIndex = Math.floor(Math.random() * deepStarCount);
+        const sourceIndex3 = starIndex * 3;
+        counterSourceWorld.set(
+            deepStarPositions[sourceIndex3],
+            deepStarPositions[sourceIndex3 + 1],
+            deepStarPositions[sourceIndex3 + 2]
+        );
+    } else {
+        const starIndex = Math.floor(Math.random() * starCount);
+        const sourceIndex3 = starIndex * 3;
+        counterSourceWorld.set(
+            starPositions[sourceIndex3],
+            starPositions[sourceIndex3 + 1],
+            starPositions[sourceIndex3 + 2]
+        );
+    }
+
+    counterSourceLocal.copy(counterSourceWorld).sub(starCounterGroup.position);
+    counterQuatInverse.copy(starCounterGroup.quaternion).invert();
+    counterSourceLocal.applyQuaternion(counterQuatInverse);
+
+    const scaleX = Math.max(0.001, starCounterGroup.scale.x);
+    const scaleY = Math.max(0.001, starCounterGroup.scale.y);
+    const scaleZ = Math.max(0.001, starCounterGroup.scale.z);
+    counterSourceLocal.set(
+        counterSourceLocal.x / scaleX,
+        counterSourceLocal.y / scaleY,
+        counterSourceLocal.z / scaleZ
+    );
+
+    const pull = voidMode ? 0.08 : 0.12;
+    starCounterPositions[index3] = THREE.MathUtils.lerp(counterSourceLocal.x, tx, pull);
+    starCounterPositions[index3 + 1] = THREE.MathUtils.lerp(counterSourceLocal.y, ty, pull);
+    starCounterPositions[index3 + 2] = THREE.MathUtils.lerp(counterSourceLocal.z, tz, pull) + THREE.MathUtils.randFloatSpread(0.12);
+}
+
 function createStarCounterUI() {
     if (starCounterGroup || !scene) {
         return;
@@ -1031,6 +1109,7 @@ function updateStarCounterDisplay() {
     }
 
     const value = String(Math.max(0, spaceLaunchCount));
+    starCounterDisplayText = value;
     const signature = `${counterVoidMode ? "V" : "N"}:${value}`;
     const signatureChanged = signature !== starCounterLastSignature;
     const targetTriples = buildStarCounterTargetTriples(value, counterVoidMode);
@@ -1046,16 +1125,8 @@ function updateStarCounterDisplay() {
         starCounterTargetPositions[index3 + 1] = ty;
         starCounterTargetPositions[index3 + 2] = tz;
 
-        if (i >= oldCount) {
-            const spawnSpread = counterVoidMode ? 2.6 : 1.1;
-            starCounterPositions[index3] = tx + THREE.MathUtils.randFloatSpread(spawnSpread);
-            starCounterPositions[index3 + 1] = ty + THREE.MathUtils.randFloatSpread(spawnSpread);
-            starCounterPositions[index3 + 2] = THREE.MathUtils.randFloatSpread(0.8);
-            starCounterPhases[i] = Math.random() * Math.PI * 2;
-        } else if (signatureChanged && counterVoidMode) {
-            starCounterPositions[index3] += THREE.MathUtils.randFloatSpread(0.22);
-            starCounterPositions[index3 + 1] += THREE.MathUtils.randFloatSpread(0.22);
-            starCounterPositions[index3 + 2] += THREE.MathUtils.randFloatSpread(0.08);
+        if (i >= oldCount || signatureChanged) {
+            seedCounterPointFromScene(index3, tx, ty, tz, counterVoidMode);
             starCounterPhases[i] = Math.random() * Math.PI * 2;
         }
         starCounterBaseIntensity[i] = 0.66 + Math.random() * 0.46;
@@ -1103,10 +1174,11 @@ function updateStarCounterVisual(nowMs) {
     }
     starCounterGroup.quaternion.copy(camera.quaternion);
     if (counterVoidMode) {
-        const glyphHeight = STAR_COUNTER_DIGIT_HEIGHT * STAR_COUNTER_VOID_SCALE;
-        const verticalScale = (halfHeight * 1.9) / Math.max(1, glyphHeight);
-        const horizontalScale = verticalScale;
-        starCounterGroup.scale.set(horizontalScale, verticalScale, 1);
+        const size = getCounterGlyphSize(starCounterDisplayText, true);
+        const fitX = (halfWidth * 1.9) / Math.max(1, size.width);
+        const fitY = (halfHeight * 1.9) / Math.max(1, size.height);
+        const uniform = Math.max(0.001, Math.min(fitX, fitY));
+        starCounterGroup.scale.set(uniform, uniform, 1);
     } else {
         starCounterGroup.scale.set(STAR_COUNTER_WORLD_SCALE / 36, STAR_COUNTER_WORLD_SCALE / 36, 1);
     }
@@ -1191,6 +1263,182 @@ function isSingularityBlackout() {
     return false;
 }
 
+function cancelVoidCountdown() {
+    voidCountdownActive = false;
+    voidCountdownValue = 0;
+    voidCountdownNextAtMs = 0;
+}
+
+function startVoidCountdown(nowMs = performance.now()) {
+    if (spaceLaunchCount <= 0) {
+        return;
+    }
+    voidCountdownActive = true;
+    voidCountdownValue = spaceLaunchCount;
+    voidCountdownNextAtMs = nowMs + VOID_COUNTDOWN_STEP_MS;
+}
+
+function triggerBigBang(nowMs = performance.now()) {
+    if (!scene || !camera) {
+        return;
+    }
+
+    bigBangState = { startedAtMs: nowMs };
+    cancelVoidCountdown();
+    voidCounterPrimed = false;
+    lastBlackoutSpacePressMs = 0;
+    setCounterVoidMode(false);
+
+    spaceLaunchCount = 0;
+    starCounterGlowUntilMs = nowMs + 520;
+    updateStarCounterDisplay();
+
+    pendingCompanionFromBlackout = false;
+    companionSpawnedFromBlackout = false;
+    dualConstellationActive = false;
+    dualConstellationProgress = 0;
+    dualConstellationActivatedAtMs = 0;
+    if (companionConstellation) {
+        disposeCompanionConstellation();
+    }
+
+    for (let i = shootingStars.length - 1; i >= 0; i -= 1) {
+        removeShootingStar(i);
+    }
+    for (let i = foodMeshes.length - 1; i >= 0; i -= 1) {
+        removeFoodAt(i);
+    }
+
+    const centerX = camera.position.x;
+    const centerY = camera.position.y;
+    const centerZ = 0;
+
+    if (starPositions && starVelX && starVelY) {
+        for (let i = 0; i < starCount; i += 1) {
+            const index3 = i * 3;
+            starPositions[index3] = centerX + THREE.MathUtils.randFloatSpread(5);
+            starPositions[index3 + 1] = centerY + THREE.MathUtils.randFloatSpread(5);
+            starPositions[index3 + 2] = centerZ + THREE.MathUtils.randFloatSpread(56);
+
+            const angle = Math.random() * Math.PI * 2;
+            const speed = THREE.MathUtils.randFloat(BIG_BANG_STAR_BURST_MIN, BIG_BANG_STAR_BURST_MAX);
+            starVelX[i] = Math.cos(angle) * speed;
+            starVelY[i] = Math.sin(angle) * speed;
+            starDrift[i] = 0.8 + Math.random() * 1.2;
+        }
+        if (stars && stars.geometry && stars.geometry.attributes.position) {
+            stars.geometry.attributes.position.needsUpdate = true;
+        }
+    }
+
+    if (deepStarPositions && deepStarDrift) {
+        for (let i = 0; i < deepStarCount; i += 1) {
+            const index3 = i * 3;
+            deepStarPositions[index3] = centerX + THREE.MathUtils.randFloatSpread(8);
+            deepStarPositions[index3 + 1] = centerY + THREE.MathUtils.randFloatSpread(8);
+            deepStarPositions[index3 + 2] = centerZ - 80 + THREE.MathUtils.randFloatSpread(120);
+            deepStarDrift[i] = THREE.MathUtils.randFloat(BIG_BANG_DEEP_BURST_MIN, BIG_BANG_DEEP_BURST_MAX);
+        }
+        if (deepStars && deepStars.geometry && deepStars.geometry.attributes.position) {
+            deepStars.geometry.attributes.position.needsUpdate = true;
+        }
+    }
+
+    if (constellationEntryState) {
+        snapConstellationPayloadToBase(constellationEntryState.dust);
+        snapConstellationPayloadToBase(constellationEntryState.nodes);
+        snapConstellationPayloadToBase(constellationEntryState.linesNear);
+        snapConstellationPayloadToBase(constellationEntryState.linesFar);
+    }
+
+    singularityCollapse = 0;
+    blackHolePower = 0;
+    blackHoleRadius = MIN_BLACKHOLE_RADIUS;
+    lastPointerMoveMs = nowMs;
+
+    if (singularityOverlay) {
+        singularityOverlay.material.opacity = 0;
+        singularityOverlay.visible = false;
+    }
+}
+
+function updateVoidCounterCountdown(nowMs) {
+    const blackout = isSingularityBlackout();
+    if (!blackout) {
+        cancelVoidCountdown();
+        voidCounterPrimed = false;
+        lastBlackoutSpacePressMs = 0;
+        return;
+    }
+
+    if (!voidCounterPrimed && spaceLaunchCount > 0) {
+        voidCounterPrimed = true;
+        if (lastBlackoutSpacePressMs <= 0) {
+            lastBlackoutSpacePressMs = nowMs;
+        }
+    }
+
+    if (!voidCounterPrimed || bigBangState) {
+        return;
+    }
+
+    if (!voidCountdownActive) {
+        if (spaceLaunchCount > 0 && nowMs - lastBlackoutSpacePressMs >= VOID_COUNTDOWN_ARM_MS) {
+            startVoidCountdown(nowMs);
+        }
+        return;
+    }
+
+    if (nowMs < voidCountdownNextAtMs) {
+        return;
+    }
+
+    voidCountdownNextAtMs = nowMs + VOID_COUNTDOWN_STEP_MS;
+    voidCountdownValue = Math.max(0, voidCountdownValue - 1);
+    spaceLaunchCount = voidCountdownValue;
+    starCounterGlowUntilMs = nowMs + 120;
+    updateStarCounterDisplay();
+
+    if (voidCountdownValue <= 0) {
+        triggerBigBang(nowMs);
+    }
+}
+
+function updateBigBang(nowMs) {
+    if (!bigBangState || !bigBangFlash || !camera) {
+        return;
+    }
+
+    const progress = THREE.MathUtils.clamp((nowMs - bigBangState.startedAtMs) / BIG_BANG_FLASH_MS, 0, 1);
+
+    const overlayDistance = 0.33;
+    camera.getWorldDirection(singularityCameraForward);
+    singularityVectorA.copy(camera.position).addScaledVector(singularityCameraForward, overlayDistance);
+    const halfHeight = Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5)) * overlayDistance;
+    const halfWidth = halfHeight * camera.aspect;
+    const scaleMul = 1 + progress * 2.8;
+
+    bigBangFlash.position.copy(singularityVectorA);
+    bigBangFlash.quaternion.copy(camera.quaternion);
+    bigBangFlash.scale.set(halfWidth * 2.1 * scaleMul, halfHeight * 2.1 * scaleMul, 1);
+
+    let opacity;
+    if (progress < 0.18) {
+        opacity = progress / 0.18;
+    } else {
+        const tail = 1 - ((progress - 0.18) / 0.82);
+        opacity = Math.max(0, tail * tail * 0.95);
+    }
+    bigBangFlash.material.opacity = opacity;
+    bigBangFlash.visible = opacity > 0.002;
+
+    if (progress >= 1) {
+        bigBangState = null;
+        bigBangFlash.visible = false;
+        bigBangFlash.material.opacity = 0;
+    }
+}
+
 function updateDualConstellationProgress(nowMs) {
     if (!dualConstellationActive) {
         dualConstellationProgress = 0;
@@ -1210,19 +1458,19 @@ function incrementSpaceCounter(nowMs = performance.now(), fromBlackout = false) 
     starCounterGlowUntilMs = nowMs + 360;
     updateStarCounterDisplay();
 
+    if (fromBlackout) {
+        voidCounterPrimed = true;
+        lastBlackoutSpacePressMs = nowMs;
+        cancelVoidCountdown();
+        return;
+    }
+
     if (!dualConstellationActive && !companionConstellationLoading && !companionConstellation && spaceLaunchCount >= SPACE_COUNTER_TARGET) {
-        pendingCompanionFromBlackout = fromBlackout;
+        pendingCompanionFromBlackout = false;
         loadCompanionConstellationFromImage(
             COMPANION_CONSTELLATION_IMAGE_URL,
             COMPANION_CONSTELLATION_FALLBACK_IMAGE_URL
         );
-
-        if (fromBlackout) {
-            lastPointerMoveMs = nowMs;
-            blackHolePower = 0;
-            singularityCollapse = 0;
-            setCounterVoidMode(false);
-        }
     }
 }
 
@@ -1679,6 +1927,9 @@ function handleBlackholeBreakByPointer(nowMs = performance.now()) {
 
     companionSpawnedFromBlackout = false;
     pendingCompanionFromBlackout = false;
+    cancelVoidCountdown();
+    voidCounterPrimed = false;
+    lastBlackoutSpacePressMs = 0;
     setCounterVoidMode(false);
     if (constellationEntryState) {
         snapConstellationPayloadToBase(constellationEntryState.dust);
@@ -2130,6 +2381,9 @@ function bindEvents() {
                 return;
             }
             const now = performance.now();
+            if (bigBangState) {
+                return;
+            }
             if (isSingularityBlackout()) {
                 setCounterVoidMode(true);
                 incrementSpaceCounter(now, true);
@@ -2737,6 +2991,21 @@ function createBlackHoleVisual() {
     singularityOverlay.renderOrder = 1200;
     singularityOverlay.visible = false;
     scene.add(singularityOverlay);
+
+    bigBangFlash = new THREE.Mesh(
+        new THREE.PlaneGeometry(2, 2),
+        new THREE.MeshBasicMaterial({
+            color: 0xffffff,
+            transparent: true,
+            opacity: 0,
+            depthWrite: false,
+            depthTest: false,
+            blending: THREE.AdditiveBlending
+        })
+    );
+    bigBangFlash.renderOrder = 1300;
+    bigBangFlash.visible = false;
+    scene.add(bigBangFlash);
 }
 
 function createShootingStarTexture() {
@@ -4428,6 +4697,7 @@ function animate(nowMs = performance.now()) {
 
     updateBlackHole(delta, nowMs);
     setCounterVoidMode(isSingularityBlackout());
+    updateVoidCounterCountdown(nowMs);
     updateStarCounterVisual(nowMs);
 
     const dynamicSpawnInterval = Math.max(
@@ -4457,6 +4727,7 @@ function animate(nowMs = performance.now()) {
     updateConstellation(nowMs, delta);
     updateCompanionConstellation(nowMs, delta);
     updateCompanionBursts(delta, nowMs);
+    updateBigBang(nowMs);
 
     renderer.render(scene, camera);
 }
