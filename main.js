@@ -17,7 +17,7 @@ const foods = [
     "ıslak hamburger"
 ];
 
-const BUILD_ID = "20260217-constellation-v20-space-food-eject";
+const BUILD_ID = "20260219-constellation-v21-star-counter-glyphs";
 
 const BASE_STAR_COUNT = 22000;
 const MIN_STAR_COUNT = 7000;
@@ -79,9 +79,17 @@ const STAR_COUNTER_WORLD_Z = 6;
 const STAR_COUNTER_MARGIN_X = 22;
 const STAR_COUNTER_MARGIN_Y = 11;
 const STAR_COUNTER_WORLD_SCALE = 36;
+const STAR_COUNTER_MAX_POINTS = 4200;
+const STAR_COUNTER_TRANSITION_MS = 860;
+const STAR_COUNTER_TWINKLE_SPEED = 0.0044;
+const STAR_COUNTER_GLYPH_DEPTH = 0.42;
 const DUAL_CONSTELLATION_SPLIT_X = 430;
 const DUAL_CONSTELLATION_SLIDE_MS = 3600;
 const COMPANION_CONSTELLATION_FADE_MS = 1300;
+const COMPANION_CONSTELLATION_DRAW_MS = 4200;
+const COMPANION_CONSTELLATION_SPARKLE_DECAY_MS = 540;
+const COMPANION_CONSTELLATION_SPARKLE_MIN_INTERVAL_MS = 220;
+const COMPANION_CONSTELLATION_SPARKLE_MAX_INTERVAL_MS = 680;
 const COMPANION_CONSTELLATION_IMAGE_URL = "bayanhuso.png";
 const COMPANION_CONSTELLATION_FALLBACK_IMAGE_URL = "husospace.png";
 
@@ -269,11 +277,19 @@ let powerAnchorClientX = null;
 let powerAnchorClientY = null;
 let spaceLaunchCount = 0;
 let starCounterGroup = null;
-let starCounterTextSprite = null;
-let starCounterTexture = null;
-let starCounterCanvas = null;
-let starCounterContext = null;
-let starCounterSparkleMaterials = [];
+let starCounterPoints = null;
+let starCounterGeometry = null;
+let starCounterPositions = null;
+let starCounterTargetPositions = null;
+let starCounterColors = null;
+let starCounterPhases = null;
+let starCounterBaseIntensity = null;
+let starCounterPointCount = 0;
+let starCounterTransitionStartedMs = 0;
+let starCounterTransitionUntilMs = 0;
+let starCounterLastSignature = "";
+let starCounterGlyphCanvas = null;
+let starCounterGlyphContext = null;
 let starCounterGlowUntilMs = 0;
 let counterVoidMode = false;
 let dualConstellationActive = false;
@@ -420,6 +436,41 @@ function sortLineTriplesForEntry(lineTriples, seedOffset) {
     const ordered = [];
     for (let i = 0; i < segments.length; i += 1) {
         ordered.push(...segments[i].values);
+    }
+    return ordered;
+}
+
+function sortPointTriplesForEntry(pointTriples, seedOffset) {
+    const pointCount = Math.floor(pointTriples.length / 3);
+    if (pointCount === 0) {
+        return [];
+    }
+
+    const scored = [];
+    for (let i = 0; i < pointCount; i += 1) {
+        const index3 = i * 3;
+        const x = pointTriples[index3];
+        const y = pointTriples[index3 + 1];
+        const radial = THREE.MathUtils.clamp(
+            Math.hypot(x, y) / (CONSTELLATION_WORLD_WIDTH * 0.72),
+            0,
+            1
+        );
+        const noise = seededUnit((i + 1) * 29.117 + seedOffset * 1.91);
+        scored.push({
+            score: radial * 0.58 + noise * 0.42,
+            values: [
+                pointTriples[index3],
+                pointTriples[index3 + 1],
+                pointTriples[index3 + 2]
+            ]
+        });
+    }
+
+    scored.sort((a, b) => a.score - b.score);
+    const ordered = [];
+    for (let i = 0; i < scored.length; i += 1) {
+        ordered.push(...scored[i].values);
     }
     return ordered;
 }
@@ -813,180 +864,194 @@ function resolvePerformanceProfile() {
     maxActiveFood = Math.max(28, Math.round(FOOD_MAX_ACTIVE * foodMultiplier));
 }
 
+function ensureStarCounterGlyphCanvas(width, height) {
+    if (!starCounterGlyphCanvas) {
+        starCounterGlyphCanvas = document.createElement("canvas");
+        starCounterGlyphContext = starCounterGlyphCanvas.getContext("2d", { willReadFrequently: true });
+    }
+    if (!starCounterGlyphContext) {
+        return null;
+    }
+    if (starCounterGlyphCanvas.width !== width || starCounterGlyphCanvas.height !== height) {
+        starCounterGlyphCanvas.width = width;
+        starCounterGlyphCanvas.height = height;
+    }
+    return starCounterGlyphContext;
+}
+
+function buildStarCounterTargetTriples(valueText, targetText, voidMode) {
+    const canvasWidth = voidMode ? 520 : 760;
+    const canvasHeight = voidMode ? 1280 : 210;
+    const context = ensureStarCounterGlyphCanvas(canvasWidth, canvasHeight);
+    if (!context) {
+        return [];
+    }
+
+    context.clearRect(0, 0, canvasWidth, canvasHeight);
+    context.fillStyle = "rgba(255,255,255,1)";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+
+    if (voidMode) {
+        context.font = "900 248px \"Trebuchet MS\", \"Segoe UI\", sans-serif";
+        context.fillText(valueText, canvasWidth * 0.5, canvasHeight * 0.3);
+        context.font = "700 144px \"Trebuchet MS\", \"Segoe UI\", sans-serif";
+        context.fillText("/", canvasWidth * 0.5, canvasHeight * 0.5);
+        context.font = "900 248px \"Trebuchet MS\", \"Segoe UI\", sans-serif";
+        context.fillText(targetText, canvasWidth * 0.5, canvasHeight * 0.7);
+    } else {
+        context.font = "900 148px \"Trebuchet MS\", \"Segoe UI\", sans-serif";
+        context.fillText(`${valueText} / ${targetText}`, canvasWidth * 0.5, canvasHeight * 0.54);
+    }
+
+    const image = context.getImageData(0, 0, canvasWidth, canvasHeight).data;
+    const step = voidMode ? 7 : 4;
+    const localWidth = voidMode ? 20 : 34;
+    const localHeight = voidMode ? 74 : 10;
+    const raw = [];
+
+    for (let y = 0; y < canvasHeight; y += step) {
+        for (let x = 0; x < canvasWidth; x += step) {
+            const alpha = image[(y * canvasWidth + x) * 4 + 3];
+            if (alpha < 74) {
+                continue;
+            }
+            if (voidMode && ((x + y) % 3 === 1)) {
+                continue;
+            }
+            const nx = x / Math.max(1, canvasWidth - 1);
+            const ny = y / Math.max(1, canvasHeight - 1);
+            raw.push(
+                (nx - 0.5) * localWidth,
+                (0.5 - ny) * localHeight,
+                THREE.MathUtils.randFloatSpread(STAR_COUNTER_GLYPH_DEPTH)
+            );
+        }
+    }
+
+    const rawCount = Math.floor(raw.length / 3);
+    if (rawCount <= STAR_COUNTER_MAX_POINTS) {
+        return raw;
+    }
+
+    const stride = Math.ceil(rawCount / STAR_COUNTER_MAX_POINTS);
+    const sampled = [];
+    for (let i = 0; i < rawCount; i += stride) {
+        const index3 = i * 3;
+        sampled.push(raw[index3], raw[index3 + 1], raw[index3 + 2]);
+    }
+    return sampled;
+}
+
 function createStarCounterUI() {
     if (starCounterGroup || !scene) {
         return;
     }
 
-    starCounterCanvas = document.createElement("canvas");
-    starCounterCanvas.width = 320;
-    starCounterCanvas.height = 96;
-    starCounterContext = starCounterCanvas.getContext("2d");
-    if (!starCounterContext) {
-        return;
-    }
-
-    starCounterTexture = new THREE.CanvasTexture(starCounterCanvas);
-    starCounterTexture.minFilter = THREE.LinearFilter;
-    starCounterTexture.magFilter = THREE.LinearFilter;
-
     const group = new THREE.Group();
-    const textMaterial = new THREE.SpriteMaterial({
-        map: starCounterTexture,
+    const pointCapacity = STAR_COUNTER_MAX_POINTS;
+    starCounterPositions = new Float32Array(pointCapacity * 3);
+    starCounterTargetPositions = new Float32Array(pointCapacity * 3);
+    starCounterColors = new Float32Array(pointCapacity * 3);
+    starCounterPhases = new Float32Array(pointCapacity);
+    starCounterBaseIntensity = new Float32Array(pointCapacity);
+
+    for (let i = 0; i < pointCapacity; i += 1) {
+        const index3 = i * 3;
+        starCounterPositions[index3] = THREE.MathUtils.randFloatSpread(22);
+        starCounterPositions[index3 + 1] = THREE.MathUtils.randFloatSpread(8);
+        starCounterPositions[index3 + 2] = THREE.MathUtils.randFloatSpread(1.2);
+        starCounterTargetPositions[index3] = 0;
+        starCounterTargetPositions[index3 + 1] = 0;
+        starCounterTargetPositions[index3 + 2] = 0;
+        starCounterPhases[i] = Math.random() * Math.PI * 2;
+        starCounterBaseIntensity[i] = 0.72 + Math.random() * 0.34;
+    }
+
+    starCounterGeometry = new THREE.BufferGeometry();
+    starCounterGeometry.setAttribute("position", new THREE.BufferAttribute(starCounterPositions, 3));
+    starCounterGeometry.setAttribute("color", new THREE.BufferAttribute(starCounterColors, 3));
+    starCounterGeometry.setDrawRange(0, 0);
+
+    const material = new THREE.PointsMaterial({
+        size: 0.48,
+        sizeAttenuation: true,
         transparent: true,
-        opacity: 0.78,
+        opacity: 0.88,
         depthWrite: false,
-        depthTest: false
+        depthTest: false,
+        vertexColors: true,
+        blending: THREE.AdditiveBlending
     });
-    const textSprite = new THREE.Sprite(textMaterial);
-    textSprite.scale.set(34, 10, 1);
-    textSprite.renderOrder = 1100;
-    group.add(textSprite);
-
-    const sparkleCanvas = document.createElement("canvas");
-    sparkleCanvas.width = 48;
-    sparkleCanvas.height = 48;
-    const sparkleCtx = sparkleCanvas.getContext("2d");
-    if (sparkleCtx) {
-        const gradient = sparkleCtx.createRadialGradient(24, 24, 0, 24, 24, 24);
-        gradient.addColorStop(0, "rgba(255,255,255,0.98)");
-        gradient.addColorStop(0.34, "rgba(212,236,255,0.8)");
-        gradient.addColorStop(1, "rgba(0,0,0,0)");
-        sparkleCtx.fillStyle = gradient;
-        sparkleCtx.fillRect(0, 0, 48, 48);
-    }
-    const sparkleTexture = new THREE.CanvasTexture(sparkleCanvas);
-    sparkleTexture.minFilter = THREE.LinearFilter;
-    sparkleTexture.magFilter = THREE.LinearFilter;
-    starCounterSparkleMaterials = [];
-
-    const sparkleCount = 8;
-    for (let i = 0; i < sparkleCount; i += 1) {
-        const material = new THREE.SpriteMaterial({
-            map: sparkleTexture,
-            color: new THREE.Color(0xd8ebff),
-            transparent: true,
-            opacity: 0.32,
-            depthWrite: false,
-            depthTest: false,
-            blending: THREE.AdditiveBlending
-        });
-        const sparkle = new THREE.Sprite(material);
-        const side = i % 2 === 0 ? 1 : -1;
-        sparkle.position.set(
-            side * (8.4 + Math.random() * 7.8),
-            (Math.random() - 0.5) * 6.4,
-            0
-        );
-        const scale = 0.95 + Math.random() * 1.3;
-        sparkle.scale.set(scale, scale, 1);
-        sparkle.userData = {
-            baseX: sparkle.position.x,
-            baseY: sparkle.position.y,
-            phase: Math.random() * Math.PI * 2,
-            speed: 0.0016 + Math.random() * 0.0024,
-            baseOpacity: 0.18 + Math.random() * 0.2
-        };
-        sparkle.renderOrder = 1098;
-        group.add(sparkle);
-        starCounterSparkleMaterials.push(material);
-    }
+    starCounterPoints = new THREE.Points(starCounterGeometry, material);
+    starCounterPoints.renderOrder = 1100;
+    group.add(starCounterPoints);
 
     starCounterGroup = group;
-    starCounterTextSprite = textSprite;
+    starCounterPointCount = 0;
+    starCounterTransitionStartedMs = performance.now();
+    starCounterTransitionUntilMs = starCounterTransitionStartedMs;
     updateStarCounterDisplay();
     scene.add(group);
 }
 
 function updateStarCounterDisplay() {
-    if (!starCounterContext || !starCounterCanvas || !starCounterTexture) {
+    if (!starCounterGeometry || !starCounterPositions || !starCounterTargetPositions) {
         return;
     }
 
-    const ctx = starCounterContext;
     const valueDigits = Math.max(2, String(SPACE_COUNTER_TARGET).length);
     const value = String(spaceLaunchCount).padStart(valueDigits, "0");
     const target = String(SPACE_COUNTER_TARGET).padStart(valueDigits, "0");
-    const width = counterVoidMode ? 460 : 320;
-    const height = counterVoidMode ? 980 : 96;
+    const signature = `${counterVoidMode ? "V" : "N"}:${value}/${target}`;
+    const signatureChanged = signature !== starCounterLastSignature;
+    const targetTriples = buildStarCounterTargetTriples(value, target, counterVoidMode);
+    const nextCount = Math.min(STAR_COUNTER_MAX_POINTS, Math.floor(targetTriples.length / 3));
+    const oldCount = starCounterPointCount;
 
-    if (starCounterCanvas.width !== width || starCounterCanvas.height !== height) {
-        starCounterCanvas.width = width;
-        starCounterCanvas.height = height;
+    for (let i = 0; i < nextCount; i += 1) {
+        const index3 = i * 3;
+        const tx = targetTriples[index3];
+        const ty = targetTriples[index3 + 1];
+        const tz = targetTriples[index3 + 2];
+        starCounterTargetPositions[index3] = tx;
+        starCounterTargetPositions[index3 + 1] = ty;
+        starCounterTargetPositions[index3 + 2] = tz;
+
+        if (i >= oldCount || signatureChanged) {
+            const angle = Math.random() * Math.PI * 2;
+            const radius = (counterVoidMode ? 18 : 8) * (0.65 + Math.random() * 0.95);
+            starCounterPositions[index3] = tx + Math.cos(angle) * radius;
+            starCounterPositions[index3 + 1] = ty + Math.sin(angle) * radius;
+            starCounterPositions[index3 + 2] = THREE.MathUtils.randFloatSpread(1.2);
+            starCounterPhases[i] = Math.random() * Math.PI * 2;
+        }
+        starCounterBaseIntensity[i] = 0.66 + Math.random() * 0.46;
     }
 
-    ctx.clearRect(0, 0, width, height);
-
-    if (counterVoidMode) {
-        const bg = ctx.createLinearGradient(0, 0, 0, height);
-        bg.addColorStop(0, "rgba(0,0,0,0)");
-        bg.addColorStop(0.2, "rgba(8,14,24,0.36)");
-        bg.addColorStop(0.5, "rgba(10,18,32,0.54)");
-        bg.addColorStop(0.8, "rgba(8,14,24,0.36)");
-        bg.addColorStop(1, "rgba(0,0,0,0)");
-        ctx.fillStyle = bg;
-        ctx.fillRect(0, 0, width, height);
-
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.shadowColor = "rgba(180, 228, 255, 0.48)";
-        ctx.shadowBlur = 24;
-        ctx.fillStyle = "rgba(238, 248, 255, 0.96)";
-        ctx.font = "700 114px \"Trebuchet MS\", \"Segoe UI\", sans-serif";
-        ctx.fillText(`${value}`, width * 0.5, height * 0.31);
-        ctx.font = "600 72px \"Trebuchet MS\", \"Segoe UI\", sans-serif";
-        ctx.fillStyle = "rgba(200, 224, 255, 0.9)";
-        ctx.fillText("/", width * 0.5, height * 0.49);
-        ctx.font = "700 114px \"Trebuchet MS\", \"Segoe UI\", sans-serif";
-        ctx.fillStyle = "rgba(255, 234, 178, 0.94)";
-        ctx.fillText(`${target}`, width * 0.5, height * 0.67);
-        ctx.font = "600 56px \"Trebuchet MS\", \"Segoe UI\", sans-serif";
-        ctx.fillStyle = "rgba(220, 238, 255, 0.88)";
-        ctx.fillText("*", width * 0.5, height * 0.12);
-        ctx.fillText("*", width * 0.5, height * 0.86);
-        ctx.shadowBlur = 0;
-    } else {
-        const radius = 22;
-        ctx.beginPath();
-        ctx.moveTo(radius, 10);
-        ctx.lineTo(width - radius, 10);
-        ctx.quadraticCurveTo(width - 10, 10, width - 10, 10 + radius);
-        ctx.lineTo(width - 10, height - 10 - radius);
-        ctx.quadraticCurveTo(width - 10, height - 10, width - 10 - radius, height - 10);
-        ctx.lineTo(10 + radius, height - 10);
-        ctx.quadraticCurveTo(10, height - 10, 10, height - 10 - radius);
-        ctx.lineTo(10, 10 + radius);
-        ctx.quadraticCurveTo(10, 10, 10 + radius, 10);
-        ctx.closePath();
-
-        const glow = ctx.createLinearGradient(0, 0, width, 0);
-        glow.addColorStop(0, "rgba(10,16,30,0.08)");
-        glow.addColorStop(0.55, "rgba(20,34,58,0.2)");
-        glow.addColorStop(1, "rgba(10,16,30,0.08)");
-        ctx.fillStyle = glow;
-        ctx.fill();
-        ctx.strokeStyle = "rgba(146, 196, 244, 0.3)";
-        ctx.lineWidth = 1.4;
-        ctx.stroke();
-
-        ctx.font = "600 30px \"Trebuchet MS\", \"Segoe UI\", sans-serif";
-        ctx.fillStyle = "rgba(214,236,255,0.9)";
-        ctx.textAlign = "left";
-        ctx.textBaseline = "middle";
-        ctx.fillText("* *", 28, 50);
-
-        ctx.font = "700 27px \"Trebuchet MS\", \"Segoe UI\", sans-serif";
-        ctx.fillStyle = spaceLaunchCount >= SPACE_COUNTER_TARGET
-            ? "rgba(255, 230, 170, 0.98)"
-            : "rgba(225, 242, 255, 0.96)";
-        ctx.fillText(`${value} / ${target}`, 106, 50);
+    for (let i = nextCount; i < oldCount; i += 1) {
+        const index3 = i * 3;
+        const angle = Math.random() * Math.PI * 2;
+        const radius = counterVoidMode ? 24 : 11;
+        starCounterTargetPositions[index3] = Math.cos(angle) * radius;
+        starCounterTargetPositions[index3 + 1] = Math.sin(angle) * radius;
+        starCounterTargetPositions[index3 + 2] = THREE.MathUtils.randFloatSpread(1.6);
     }
 
-    starCounterTexture.needsUpdate = true;
+    starCounterPointCount = nextCount;
+    starCounterGeometry.setDrawRange(0, starCounterPointCount);
+    starCounterGeometry.attributes.position.needsUpdate = true;
+    if (starCounterGeometry.attributes.color) {
+        starCounterGeometry.attributes.color.needsUpdate = true;
+    }
+
+    starCounterTransitionStartedMs = performance.now();
+    starCounterTransitionUntilMs = starCounterTransitionStartedMs + STAR_COUNTER_TRANSITION_MS;
+    starCounterLastSignature = signature;
 }
 
 function updateStarCounterVisual(nowMs) {
-    if (!starCounterGroup || !camera) {
+    if (!starCounterGroup || !starCounterPoints || !starCounterGeometry || !camera) {
         return;
     }
 
@@ -1006,8 +1071,8 @@ function updateStarCounterVisual(nowMs) {
     }
     starCounterGroup.quaternion.copy(camera.quaternion);
     if (counterVoidMode) {
-        const verticalScale = (halfHeight * 1.7) / 36;
-        const horizontalScale = Math.max(verticalScale * 0.52, 3.8);
+        const verticalScale = (halfHeight * 1.72) / 74;
+        const horizontalScale = Math.max(verticalScale * 0.5, 3.4);
         starCounterGroup.scale.set(horizontalScale, verticalScale, 1);
     } else {
         starCounterGroup.scale.set(STAR_COUNTER_WORLD_SCALE / 36, STAR_COUNTER_WORLD_SCALE / 36, 1);
@@ -1019,30 +1084,60 @@ function updateStarCounterVisual(nowMs) {
         starCounterGroup.position.lerp(singularityVectorA, pullLerp);
     }
 
-    const twinkle = 0.72 + Math.sin(nowMs * 0.0037 + 0.4) * 0.12 + Math.sin(nowMs * 0.0064 + 1.8) * 0.06;
+    const transitionDuration = Math.max(1, starCounterTransitionUntilMs - starCounterTransitionStartedMs);
+    const transitionProgress = THREE.MathUtils.clamp(
+        (nowMs - starCounterTransitionStartedMs) / transitionDuration,
+        0,
+        1
+    );
+    const settle = (counterVoidMode ? 0.11 : 0.14) + transitionProgress * 0.22;
+    const twinkle = 0.74 + Math.sin(nowMs * 0.0039 + 0.4) * 0.12 + Math.sin(nowMs * 0.0066 + 1.8) * 0.06;
     const glowLeft = Math.max(0, starCounterGlowUntilMs - nowMs);
     const glowBoost = glowLeft > 0 ? THREE.MathUtils.clamp(glowLeft / 360, 0, 1) : 0;
-    const opacity = THREE.MathUtils.clamp(twinkle + glowBoost * 0.35, 0.45, 1);
+    const warmUnlock = spaceLaunchCount >= SPACE_COUNTER_TARGET ? 1 : 0;
 
-    if (starCounterTextSprite && starCounterTextSprite.material) {
-        starCounterTextSprite.material.opacity = opacity;
-    }
+    for (let i = 0; i < starCounterPointCount; i += 1) {
+        const index3 = i * 3;
+        const tx = starCounterTargetPositions[index3];
+        const ty = starCounterTargetPositions[index3 + 1];
+        const tz = starCounterTargetPositions[index3 + 2];
 
-    for (let i = 0; i < starCounterGroup.children.length; i += 1) {
-        const child = starCounterGroup.children[i];
-        if (!child.userData || child === starCounterTextSprite || !child.material) {
-            continue;
-        }
-        const state = child.userData;
-        child.position.x = state.baseX + Math.sin(nowMs * state.speed + state.phase) * 0.5;
-        child.position.y = state.baseY + Math.cos(nowMs * state.speed * 1.17 + state.phase) * 0.32;
-        const sparkle = 0.6 + Math.sin(nowMs * state.speed * 1.42 + state.phase * 1.6) * 0.4;
-        child.material.opacity = THREE.MathUtils.clamp(
-            state.baseOpacity * sparkle * (0.8 + glowBoost * 0.8),
-            0.06,
-            0.85
+        starCounterPositions[index3] = THREE.MathUtils.lerp(starCounterPositions[index3], tx, settle);
+        starCounterPositions[index3 + 1] = THREE.MathUtils.lerp(starCounterPositions[index3 + 1], ty, settle);
+        starCounterPositions[index3 + 2] = THREE.MathUtils.lerp(starCounterPositions[index3 + 2], tz, settle * 0.92);
+
+        const phase = starCounterPhases[i] + nowMs * STAR_COUNTER_TWINKLE_SPEED;
+        const sparkle = 0.76 + Math.sin(phase) * 0.18;
+        const brightness = THREE.MathUtils.clamp(
+            starCounterBaseIntensity[i] * sparkle * twinkle + glowBoost * 0.38,
+            0,
+            1.25
         );
+
+        const baseR = 0.82 + warmUnlock * 0.16;
+        const baseG = 0.9 + warmUnlock * 0.03;
+        const baseB = 1 - warmUnlock * 0.24;
+        starCounterColors[index3] = THREE.MathUtils.clamp(baseR * brightness, 0, 1);
+        starCounterColors[index3 + 1] = THREE.MathUtils.clamp(baseG * brightness, 0, 1);
+        starCounterColors[index3 + 2] = THREE.MathUtils.clamp(baseB * brightness, 0, 1);
     }
+
+    if (starCounterPointCount < STAR_COUNTER_MAX_POINTS) {
+        for (let i = starCounterPointCount; i < Math.min(STAR_COUNTER_MAX_POINTS, starCounterPointCount + 16); i += 1) {
+            const index3 = i * 3;
+            starCounterColors[index3] = 0;
+            starCounterColors[index3 + 1] = 0;
+            starCounterColors[index3 + 2] = 0;
+        }
+    }
+
+    starCounterGeometry.attributes.position.needsUpdate = true;
+    if (starCounterGeometry.attributes.color) {
+        starCounterGeometry.attributes.color.needsUpdate = true;
+    }
+
+    starCounterPoints.material.opacity = THREE.MathUtils.clamp(0.7 + glowBoost * 0.3, 0.5, 1);
+    starCounterPoints.material.size = counterVoidMode ? 0.62 : 0.46;
 }
 
 function setCounterVoidMode(active) {
@@ -1546,6 +1641,12 @@ function handleBlackholeBreakByPointer(nowMs = performance.now()) {
     companionSpawnedFromBlackout = false;
     pendingCompanionFromBlackout = false;
     setCounterVoidMode(false);
+    if (constellationEntryState) {
+        snapConstellationPayloadToBase(constellationEntryState.dust);
+        snapConstellationPayloadToBase(constellationEntryState.nodes);
+        snapConstellationPayloadToBase(constellationEntryState.linesNear);
+        snapConstellationPayloadToBase(constellationEntryState.linesFar);
+    }
 
     lastPointerMoveMs = nowMs;
     singularityCollapse = 0;
@@ -1566,10 +1667,15 @@ function buildCompanionConstellation(image) {
     disposeCompanionConstellation();
 
     const group = new THREE.Group();
+    const readyAtMs = performance.now();
+    const orderedDustTriples = sortPointTriplesForEntry(triples.dustTriples, 43);
+    const orderedNodeTriples = sortPointTriplesForEntry(triples.nodeTriples, 47);
 
-    const dustLive = new Float32Array(triples.dustTriples);
+    const dustBase = new Float32Array(orderedDustTriples);
+    const dustLive = new Float32Array(dustBase);
     const dustGeometry = new THREE.BufferGeometry();
     dustGeometry.setAttribute("position", new THREE.BufferAttribute(dustLive, 3));
+    dustGeometry.setDrawRange(0, 0);
     const dustMaterial = new THREE.PointsMaterial({
         color: 0xffffff,
         size: 1.04,
@@ -1584,9 +1690,11 @@ function buildCompanionConstellation(image) {
     dustPoints.renderOrder = 2;
     group.add(dustPoints);
 
-    const nodeLive = new Float32Array(triples.nodeTriples);
+    const nodeBase = new Float32Array(orderedNodeTriples);
+    const nodeLive = new Float32Array(nodeBase);
     const nodeGeometry = new THREE.BufferGeometry();
     nodeGeometry.setAttribute("position", new THREE.BufferAttribute(nodeLive, 3));
+    nodeGeometry.setDrawRange(0, 0);
     const nodeMaterial = new THREE.PointsMaterial({
         color: 0xe6f2ff,
         size: 2.16,
@@ -1605,11 +1713,15 @@ function buildCompanionConstellation(image) {
     let farLineMaterial = null;
     let nearLinePayload = null;
     let farLinePayload = null;
+    let nearLineGeometry = null;
+    let farLineGeometry = null;
 
     if (triples.lineTriples.length > 0) {
-        const nearLineLive = new Float32Array(triples.lineTriples);
-        const nearLineGeometry = new THREE.BufferGeometry();
+        const nearLineBase = new Float32Array(triples.lineTriples);
+        const nearLineLive = new Float32Array(nearLineBase);
+        nearLineGeometry = new THREE.BufferGeometry();
         nearLineGeometry.setAttribute("position", new THREE.BufferAttribute(nearLineLive, 3));
+        nearLineGeometry.setDrawRange(0, 0);
         nearLineMaterial = new THREE.LineBasicMaterial({
             color: 0xc7daec,
             transparent: true,
@@ -1622,16 +1734,21 @@ function buildCompanionConstellation(image) {
         nearLines.renderOrder = 1;
         group.add(nearLines);
         nearLinePayload = {
+            base: nearLineBase,
             live: nearLineLive,
             count: Math.floor(nearLineLive.length / 3),
-            attribute: nearLineGeometry.attributes.position
+            attribute: nearLineGeometry.attributes.position,
+            geometry: nearLineGeometry,
+            segmentCount: Math.floor(nearLineBase.length / 6)
         };
     }
 
     if (triples.lineTriplesFar.length > 0) {
-        const farLineLive = new Float32Array(triples.lineTriplesFar);
-        const farLineGeometry = new THREE.BufferGeometry();
+        const farLineBase = new Float32Array(triples.lineTriplesFar);
+        const farLineLive = new Float32Array(farLineBase);
+        farLineGeometry = new THREE.BufferGeometry();
         farLineGeometry.setAttribute("position", new THREE.BufferAttribute(farLineLive, 3));
+        farLineGeometry.setDrawRange(0, 0);
         farLineMaterial = new THREE.LineBasicMaterial({
             color: 0xafc3d8,
             transparent: true,
@@ -1644,10 +1761,63 @@ function buildCompanionConstellation(image) {
         farLines.renderOrder = 0;
         group.add(farLines);
         farLinePayload = {
+            base: farLineBase,
             live: farLineLive,
             count: Math.floor(farLineLive.length / 3),
-            attribute: farLineGeometry.attributes.position
+            attribute: farLineGeometry.attributes.position,
+            geometry: farLineGeometry,
+            segmentCount: Math.floor(farLineBase.length / 6)
         };
+    }
+
+    let sparklePayload = null;
+    if (orderedNodeTriples.length > 0) {
+        const orderedNodeCount = Math.floor(orderedNodeTriples.length / 3);
+        const sampleCount = Math.max(16, Math.min(260, Math.floor(orderedNodeCount * 0.48)));
+        const step = Math.max(1, Math.floor(orderedNodeCount / sampleCount));
+        const sparklePositions = [];
+        for (let i = 0; i < orderedNodeCount; i += step) {
+            const index3 = i * 3;
+            sparklePositions.push(
+                orderedNodeTriples[index3],
+                orderedNodeTriples[index3 + 1],
+                orderedNodeTriples[index3 + 2]
+            );
+            if (sparklePositions.length / 3 >= sampleCount) {
+                break;
+            }
+        }
+
+        if (sparklePositions.length >= 3) {
+            const sparkleGeometry = new THREE.BufferGeometry();
+            sparkleGeometry.setAttribute("position", new THREE.Float32BufferAttribute(sparklePositions, 3));
+            const sparkleColors = new Float32Array(sparklePositions.length);
+            sparkleGeometry.setAttribute("color", new THREE.BufferAttribute(sparkleColors, 3));
+            const sparkleMaterial = new THREE.PointsMaterial({
+                size: 3.2,
+                transparent: true,
+                opacity: 0,
+                depthWrite: false,
+                depthTest: true,
+                blending: THREE.AdditiveBlending,
+                vertexColors: true
+            });
+            const sparklePoints = new THREE.Points(sparkleGeometry, sparkleMaterial);
+            sparklePoints.renderOrder = 8;
+            group.add(sparklePoints);
+
+            sparklePayload = {
+                geometry: sparkleGeometry,
+                colors: sparkleColors,
+                intensity: new Float32Array(Math.floor(sparklePositions.length / 3)),
+                material: sparkleMaterial,
+                lastMs: readyAtMs,
+                nextMs: readyAtMs + THREE.MathUtils.randFloat(
+                    COMPANION_CONSTELLATION_SPARKLE_MIN_INTERVAL_MS,
+                    COMPANION_CONSTELLATION_SPARKLE_MAX_INTERVAL_MS
+                )
+            };
+        }
     }
 
     const mouthLocalX = (CONSTELLATION_MOUTH_U - 0.5) * triples.worldWidth;
@@ -1666,20 +1836,26 @@ function buildCompanionConstellation(image) {
 
     companionConstellation = {
         group,
-        readyAtMs: performance.now(),
+        readyAtMs,
         dustMaterial,
         nodeMaterial,
         nearLineMaterial,
         farLineMaterial,
+        sparkle: sparklePayload,
+        drawDone: false,
         dustPayload: {
+            base: dustBase,
             live: dustLive,
             count: Math.floor(dustLive.length / 3),
-            attribute: dustGeometry.attributes.position
+            attribute: dustGeometry.attributes.position,
+            geometry: dustGeometry
         },
         nodePayload: {
+            base: nodeBase,
             live: nodeLive,
             count: Math.floor(nodeLive.length / 3),
-            attribute: nodeGeometry.attributes.position
+            attribute: nodeGeometry.attributes.position,
+            geometry: nodeGeometry
         },
         nearLinePayload,
         farLinePayload
@@ -1697,6 +1873,11 @@ function updateCompanionConstellation(nowMs, delta = 1) {
         return;
     }
 
+    const drawProgress = THREE.MathUtils.clamp(
+        (nowMs - companionConstellation.readyAtMs) / COMPANION_CONSTELLATION_DRAW_MS,
+        0,
+        1
+    );
     const fadeProgress = THREE.MathUtils.clamp(
         (nowMs - companionConstellation.readyAtMs) / COMPANION_CONSTELLATION_FADE_MS,
         0,
@@ -1706,26 +1887,94 @@ function updateCompanionConstellation(nowMs, delta = 1) {
     const collapseVisibility = Math.max(0, 1 - collapse * 0.995);
     const powerBoost = 1 + blackHolePower * CONSTELLATION_VISIBILITY_POWER_MULT;
     const pulse = 0.92 + Math.sin(nowMs * 0.0019 + 0.7) * 0.06 + Math.sin(nowMs * 0.0035 + 1.8) * 0.03;
-    const visibilityBoost = CONSTELLATION_VISIBILITY_MULT * powerBoost * collapseVisibility;
+    const drawFlash = 1 + (1 - drawProgress) * 0.9;
+    const visibilityBoost = CONSTELLATION_VISIBILITY_MULT * powerBoost * collapseVisibility * drawFlash;
 
     companionConstellation.dustMaterial.opacity = Math.min(
         0.23,
-        (0.043 + pulse * 0.013) * fadeProgress * visibilityBoost * CONSTELLATION_DUST_OPACITY_MULT
+        (0.043 + pulse * 0.013) * fadeProgress * drawProgress * visibilityBoost * CONSTELLATION_DUST_OPACITY_MULT
     );
     companionConstellation.nodeMaterial.opacity = Math.min(
         0.42,
-        (0.11 + pulse * 0.026) * fadeProgress * visibilityBoost * CONSTELLATION_NODE_OPACITY_MULT
+        (0.11 + pulse * 0.026) * fadeProgress * drawProgress * visibilityBoost * CONSTELLATION_NODE_OPACITY_MULT
     );
 
     const nearLineOpacity = Math.min(
         0.22,
-        (0.048 + pulse * 0.014) * fadeProgress * visibilityBoost * CONSTELLATION_LINE_OPACITY_MULT
+        (0.048 + pulse * 0.014) * fadeProgress * drawProgress * visibilityBoost * CONSTELLATION_LINE_OPACITY_MULT
     );
     if (companionConstellation.nearLineMaterial) {
         companionConstellation.nearLineMaterial.opacity = nearLineOpacity;
     }
     if (companionConstellation.farLineMaterial) {
         companionConstellation.farLineMaterial.opacity = nearLineOpacity * CONSTELLATION_FAR_LINE_OPACITY_MULT;
+    }
+
+    if (companionConstellation.dustPayload && companionConstellation.dustPayload.geometry) {
+        companionConstellation.dustPayload.geometry.setDrawRange(
+            0,
+            Math.floor(companionConstellation.dustPayload.count * drawProgress)
+        );
+    }
+    if (companionConstellation.nodePayload && companionConstellation.nodePayload.geometry) {
+        companionConstellation.nodePayload.geometry.setDrawRange(
+            0,
+            Math.floor(companionConstellation.nodePayload.count * drawProgress)
+        );
+    }
+    if (companionConstellation.nearLinePayload && companionConstellation.nearLinePayload.geometry) {
+        const segmentCount = companionConstellation.nearLinePayload.segmentCount || 0;
+        const revealSegments = Math.floor(segmentCount * drawProgress);
+        companionConstellation.nearLinePayload.geometry.setDrawRange(0, revealSegments * 2);
+    }
+    if (companionConstellation.farLinePayload && companionConstellation.farLinePayload.geometry) {
+        const segmentCount = companionConstellation.farLinePayload.segmentCount || 0;
+        const revealSegments = Math.floor(segmentCount * drawProgress);
+        companionConstellation.farLinePayload.geometry.setDrawRange(0, revealSegments * 2);
+    }
+
+    if (companionConstellation.sparkle) {
+        const sparkle = companionConstellation.sparkle;
+        const deltaMs = Math.max(0, nowMs - sparkle.lastMs);
+        sparkle.lastMs = nowMs;
+        const decay = Math.exp(-deltaMs / COMPANION_CONSTELLATION_SPARKLE_DECAY_MS);
+
+        if (nowMs >= sparkle.nextMs && sparkle.intensity.length > 0) {
+            const burstCount = Math.min(8, sparkle.intensity.length);
+            for (let i = 0; i < burstCount; i += 1) {
+                const index = Math.floor(Math.random() * sparkle.intensity.length);
+                sparkle.intensity[index] = Math.max(sparkle.intensity[index], 0.72 + Math.random() * 0.5);
+            }
+            sparkle.nextMs = nowMs + THREE.MathUtils.randFloat(
+                COMPANION_CONSTELLATION_SPARKLE_MIN_INTERVAL_MS,
+                COMPANION_CONSTELLATION_SPARKLE_MAX_INTERVAL_MS
+            );
+        }
+
+        let activeCount = 0;
+        for (let i = 0; i < sparkle.intensity.length; i += 1) {
+            let intensity = sparkle.intensity[i] * decay;
+            if (intensity < 0.002) {
+                intensity = 0;
+            } else {
+                activeCount += 1;
+            }
+            sparkle.intensity[i] = intensity;
+            const index3 = i * 3;
+            if (intensity > 0) {
+                sparkle.colors[index3] = 0.84 + intensity * 0.16;
+                sparkle.colors[index3 + 1] = 0.9 + intensity * 0.1;
+                sparkle.colors[index3 + 2] = 1;
+            } else {
+                sparkle.colors[index3] = 0;
+                sparkle.colors[index3 + 1] = 0;
+                sparkle.colors[index3 + 2] = 0;
+            }
+        }
+        sparkle.geometry.attributes.color.needsUpdate = true;
+        sparkle.material.opacity = activeCount > 0
+            ? THREE.MathUtils.clamp(0.24 + drawProgress * 0.62, 0, 0.95) * fadeProgress * collapseVisibility
+            : 0;
     }
 
     const splitOffsetX = dualConstellationProgress * DUAL_CONSTELLATION_SPLIT_X;
@@ -1747,6 +1996,11 @@ function updateCompanionConstellation(nowMs, delta = 1) {
         pullConstellationPayload(companionConstellation.nodePayload, sinkLocalX, sinkLocalY, collapse, delta);
         pullConstellationPayload(companionConstellation.nearLinePayload, sinkLocalX, sinkLocalY, collapse, delta);
         pullConstellationPayload(companionConstellation.farLinePayload, sinkLocalX, sinkLocalY, collapse, delta);
+    } else {
+        restoreConstellationPayload(companionConstellation.dustPayload, delta, 0.16);
+        restoreConstellationPayload(companionConstellation.nodePayload, delta, 0.16);
+        restoreConstellationPayload(companionConstellation.nearLinePayload, delta, 0.18);
+        restoreConstellationPayload(companionConstellation.farLinePayload, delta, 0.18);
     }
 }
 
@@ -3975,6 +4229,35 @@ function pullConstellationPayload(payload, sinkLocalX, sinkLocalY, collapse, del
     payload.attribute.needsUpdate = true;
 }
 
+function restoreConstellationPayload(payload, delta, restoreSpeed = 0.1) {
+    if (!payload || !payload.live || !payload.base || !payload.attribute || payload.count <= 0) {
+        return;
+    }
+
+    const lerpT = THREE.MathUtils.clamp(restoreSpeed * delta, 0, 1);
+    let changed = false;
+    for (let i = 0; i < payload.live.length; i += 1) {
+        const current = payload.live[i];
+        const next = THREE.MathUtils.lerp(current, payload.base[i], lerpT);
+        if (Math.abs(next - current) > 0.0001) {
+            changed = true;
+        }
+        payload.live[i] = next;
+    }
+
+    if (changed) {
+        payload.attribute.needsUpdate = true;
+    }
+}
+
+function snapConstellationPayloadToBase(payload) {
+    if (!payload || !payload.live || !payload.base || !payload.attribute || payload.count <= 0) {
+        return;
+    }
+    payload.live.set(payload.base);
+    payload.attribute.needsUpdate = true;
+}
+
 function updateConstellation(nowMs, delta = 1) {
     if (!constellationGroup || !constellationDustMaterial || !constellationNodeMaterial) {
         return;
@@ -4073,6 +4356,11 @@ function updateConstellation(nowMs, delta = 1) {
         pullConstellationPayload(constellationEntryState.nodes, sinkLocalX, sinkLocalY, collapse, delta);
         pullConstellationPayload(constellationEntryState.linesNear, sinkLocalX, sinkLocalY, collapse, delta);
         pullConstellationPayload(constellationEntryState.linesFar, sinkLocalX, sinkLocalY, collapse, delta);
+    } else if (constellationEntryState) {
+        restoreConstellationPayload(constellationEntryState.dust, delta, 0.17);
+        restoreConstellationPayload(constellationEntryState.nodes, delta, 0.17);
+        restoreConstellationPayload(constellationEntryState.linesNear, delta, 0.2);
+        restoreConstellationPayload(constellationEntryState.linesFar, delta, 0.2);
     }
 }
 
