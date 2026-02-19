@@ -17,7 +17,7 @@ const foods = [
     "ıslak hamburger"
 ];
 
-const BUILD_ID = "20260219-constellation-v22-digital-counter-showcase";
+const BUILD_ID = "20260219-constellation-v23-refined-dual-counter-gravity";
 
 const BASE_STAR_COUNT = 22000;
 const MIN_STAR_COUNT = 7000;
@@ -78,15 +78,15 @@ const SPACE_COUNTER_TARGET = 10;
 const STAR_COUNTER_WORLD_Z = 6;
 const STAR_COUNTER_MARGIN_X = 22;
 const STAR_COUNTER_MARGIN_Y = 11;
-const STAR_COUNTER_WORLD_SCALE = 48;
+const STAR_COUNTER_WORLD_SCALE = 40;
 const STAR_COUNTER_MAX_POINTS = 4200;
-const STAR_COUNTER_TRANSITION_MS = 860;
+const STAR_COUNTER_TRANSITION_MS = 620;
 const STAR_COUNTER_TWINKLE_SPEED = 0.0044;
 const STAR_COUNTER_GLYPH_DEPTH = 0.42;
-const STAR_COUNTER_DIGIT_WIDTH = 7.2;
-const STAR_COUNTER_DIGIT_HEIGHT = 14.2;
-const STAR_COUNTER_DIGIT_GAP = 2.0;
-const STAR_COUNTER_SEGMENT_POINT_STEP = 0.28;
+const STAR_COUNTER_DIGIT_WIDTH = 8.8;
+const STAR_COUNTER_DIGIT_HEIGHT = 15.8;
+const STAR_COUNTER_DIGIT_GAP = 2.8;
+const STAR_COUNTER_SEGMENT_POINT_STEP = 0.52;
 const STAR_COUNTER_VOID_SCALE = 2.28;
 const DUAL_CONSTELLATION_SPLIT_X = 430;
 const DUAL_CONSTELLATION_SLIDE_MS = 3600;
@@ -184,6 +184,8 @@ const DEEP_STAR_NEAR_BRIGHTNESS = 0.9;
 const DEEP_STAR_FAR_BRIGHTNESS = 0.34;
 const STAR_GRAV_LENS_COLOR_SHIFT = 0.24;
 const STAR_DOPPLER_COLOR_SHIFT = 0.18;
+const STAR_PASSIVE_INFLUENCE_RADIUS = 118;
+const FOOD_PASSIVE_INFLUENCE_RADIUS = 136;
 
 const SHOOTING_STAR_MIN_INTERVAL_MS = 2000;
 const SHOOTING_STAR_MAX_INTERVAL_MS = 5200;
@@ -298,7 +300,6 @@ let counterVoidMode = false;
 let dualConstellationActive = false;
 let dualConstellationActivatedAtMs = 0;
 let dualConstellationProgress = 0;
-let duoShowcaseActive = false;
 let pendingCompanionFromBlackout = false;
 let companionSpawnedFromBlackout = false;
 const companionBursts = [];
@@ -888,20 +889,31 @@ function appendCounterSegmentPoints(target, ax, ay, bx, by, voidMode) {
     const dx = bx - ax;
     const dy = by - ay;
     const length = Math.max(0.0001, Math.hypot(dx, dy));
+    const nx = -dy / length;
+    const ny = dx / length;
+    const laneCount = voidMode ? 5 : 3;
+    const halfLane = (laneCount - 1) * 0.5;
+    const laneSpacing = voidMode ? 0.28 : 0.2;
     const steps = Math.max(5, Math.floor(length / STAR_COUNTER_SEGMENT_POINT_STEP));
-    const skipMod = voidMode ? 5 : 4;
+    const dashCycle = voidMode ? 6 : 5;
+    const dashOn = voidMode ? 4 : 3;
+    const jitter = voidMode ? 0.032 : 0.022;
 
-    for (let i = 0; i <= steps; i += 1) {
-        if (i % skipMod === 2) {
-            continue;
+    for (let lane = 0; lane < laneCount; lane += 1) {
+        const laneOffset = (lane - halfLane) * laneSpacing;
+        for (let i = 0; i <= steps; i += 1) {
+            if ((i % dashCycle) >= dashOn) {
+                continue;
+            }
+            const t = i / Math.max(1, steps);
+            const baseX = THREE.MathUtils.lerp(ax, bx, t) + nx * laneOffset;
+            const baseY = THREE.MathUtils.lerp(ay, by, t) + ny * laneOffset;
+            target.push(
+                baseX + THREE.MathUtils.randFloatSpread(jitter),
+                baseY + THREE.MathUtils.randFloatSpread(jitter),
+                THREE.MathUtils.randFloatSpread(STAR_COUNTER_GLYPH_DEPTH)
+            );
         }
-        const t = i / Math.max(1, steps);
-        const jitter = voidMode ? 0.07 : 0.045;
-        target.push(
-            THREE.MathUtils.lerp(ax, bx, t) + THREE.MathUtils.randFloatSpread(jitter),
-            THREE.MathUtils.lerp(ay, by, t) + THREE.MathUtils.randFloatSpread(jitter),
-            THREE.MathUtils.randFloatSpread(STAR_COUNTER_GLYPH_DEPTH)
-        );
     }
 }
 
@@ -925,16 +937,20 @@ function buildStarCounterTargetTriples(valueText, voidMode) {
         const top = halfH;
         const mid = 0;
         const bottom = -halfH;
-        const upperMidY = halfH * 0.5;
-        const lowerMidY = -halfH * 0.5;
+        const hInset = digitWidth * 0.18;
+        const vInset = digitHeight * 0.07;
+        const vl = left + hInset * 0.45;
+        const vr = right - hInset * 0.45;
+        const ht = top - vInset;
+        const hb = bottom + vInset;
         const segmentLines = [
-            [left, top, right, top],                  // A
-            [left, upperMidY, left, mid],             // B
-            [right, upperMidY, right, mid],           // C
-            [left, mid, right, mid],                  // D
-            [left, mid, left, lowerMidY],             // E
-            [right, mid, right, lowerMidY],           // F
-            [left, bottom, right, bottom]             // G
+            [left + hInset, ht, right - hInset, ht],  // A
+            [vl, ht, vl, mid],                        // B
+            [vr, ht, vr, mid],                        // C
+            [left + hInset, mid, right - hInset, mid],// D
+            [vl, mid, vl, hb],                        // E
+            [vr, mid, vr, hb],                        // F
+            [left + hInset, hb, right - hInset, hb]   // G
         ];
 
         for (let s = 0; s < segments.length; s += 1) {
@@ -988,7 +1004,7 @@ function createStarCounterUI() {
     starCounterGeometry.setDrawRange(0, 0);
 
     const material = new THREE.PointsMaterial({
-        size: 0.54,
+        size: 0.38,
         sizeAttenuation: true,
         transparent: true,
         opacity: 0.88,
@@ -1014,7 +1030,7 @@ function updateStarCounterDisplay() {
         return;
     }
 
-    const value = String(Math.max(0, spaceLaunchCount)).padStart(2, "0");
+    const value = String(Math.max(0, spaceLaunchCount));
     const signature = `${counterVoidMode ? "V" : "N"}:${value}`;
     const signatureChanged = signature !== starCounterLastSignature;
     const targetTriples = buildStarCounterTargetTriples(value, counterVoidMode);
@@ -1030,12 +1046,16 @@ function updateStarCounterDisplay() {
         starCounterTargetPositions[index3 + 1] = ty;
         starCounterTargetPositions[index3 + 2] = tz;
 
-        if (i >= oldCount || signatureChanged) {
-            const angle = Math.random() * Math.PI * 2;
-            const radius = (counterVoidMode ? 10 : 3) * (0.6 + Math.random() * 0.8);
-            starCounterPositions[index3] = tx + Math.cos(angle) * radius;
-            starCounterPositions[index3 + 1] = ty + Math.sin(angle) * radius;
-            starCounterPositions[index3 + 2] = THREE.MathUtils.randFloatSpread(1.2);
+        if (i >= oldCount) {
+            const spawnSpread = counterVoidMode ? 2.6 : 1.1;
+            starCounterPositions[index3] = tx + THREE.MathUtils.randFloatSpread(spawnSpread);
+            starCounterPositions[index3 + 1] = ty + THREE.MathUtils.randFloatSpread(spawnSpread);
+            starCounterPositions[index3 + 2] = THREE.MathUtils.randFloatSpread(0.8);
+            starCounterPhases[i] = Math.random() * Math.PI * 2;
+        } else if (signatureChanged && counterVoidMode) {
+            starCounterPositions[index3] += THREE.MathUtils.randFloatSpread(0.22);
+            starCounterPositions[index3 + 1] += THREE.MathUtils.randFloatSpread(0.22);
+            starCounterPositions[index3 + 2] += THREE.MathUtils.randFloatSpread(0.08);
             starCounterPhases[i] = Math.random() * Math.PI * 2;
         }
         starCounterBaseIntensity[i] = 0.66 + Math.random() * 0.46;
@@ -1043,11 +1063,9 @@ function updateStarCounterDisplay() {
 
     for (let i = nextCount; i < oldCount; i += 1) {
         const index3 = i * 3;
-        const angle = Math.random() * Math.PI * 2;
-        const radius = counterVoidMode ? 24 : 11;
-        starCounterTargetPositions[index3] = Math.cos(angle) * radius;
-        starCounterTargetPositions[index3 + 1] = Math.sin(angle) * radius;
-        starCounterTargetPositions[index3 + 2] = THREE.MathUtils.randFloatSpread(1.6);
+        starCounterTargetPositions[index3] = starCounterPositions[index3] + THREE.MathUtils.randFloatSpread(0.8);
+        starCounterTargetPositions[index3 + 1] = starCounterPositions[index3 + 1] + THREE.MathUtils.randFloatSpread(0.8);
+        starCounterTargetPositions[index3 + 2] = starCounterPositions[index3 + 2] + THREE.MathUtils.randFloatSpread(0.4);
     }
 
     starCounterPointCount = nextCount;
@@ -1064,11 +1082,6 @@ function updateStarCounterDisplay() {
 
 function updateStarCounterVisual(nowMs) {
     if (!starCounterGroup || !starCounterPoints || !starCounterGeometry || !camera) {
-        return;
-    }
-
-    if (duoShowcaseActive) {
-        starCounterGroup.visible = false;
         return;
     }
     starCounterGroup.visible = true;
@@ -1110,7 +1123,7 @@ function updateStarCounterVisual(nowMs) {
         0,
         1
     );
-    const settle = (counterVoidMode ? 0.26 : 0.34) + transitionProgress * 0.26;
+    const settle = (counterVoidMode ? 0.22 : 0.28) + transitionProgress * 0.24;
     const twinkle = 0.74 + Math.sin(nowMs * 0.0039 + 0.4) * 0.12 + Math.sin(nowMs * 0.0066 + 1.8) * 0.06;
     const glowLeft = Math.max(0, starCounterGlowUntilMs - nowMs);
     const glowBoost = glowLeft > 0 ? THREE.MathUtils.clamp(glowLeft / 360, 0, 1) : 0;
@@ -1156,8 +1169,8 @@ function updateStarCounterVisual(nowMs) {
         starCounterGeometry.attributes.color.needsUpdate = true;
     }
 
-    starCounterPoints.material.opacity = THREE.MathUtils.clamp(0.7 + glowBoost * 0.3, 0.5, 1);
-    starCounterPoints.material.size = counterVoidMode ? 0.72 : 0.52;
+    starCounterPoints.material.opacity = THREE.MathUtils.clamp(0.74 + glowBoost * 0.26, 0.54, 1);
+    starCounterPoints.material.size = counterVoidMode ? 0.56 : 0.38;
 }
 
 function setCounterVoidMode(active) {
@@ -1176,56 +1189,6 @@ function isSingularityBlackout() {
         return true;
     }
     return false;
-}
-
-function setDuoShowcaseMode(active) {
-    if (duoShowcaseActive === active) {
-        return;
-    }
-    duoShowcaseActive = active;
-
-    if (starCounterGroup) {
-        starCounterGroup.visible = !active;
-    }
-    if (stars) {
-        stars.visible = !active;
-    }
-    if (deepStars) {
-        deepStars.visible = !active;
-    }
-    if (nebulaGroup) {
-        nebulaGroup.visible = !active;
-    }
-    if (blackHoleCore) {
-        blackHoleCore.visible = !active;
-    }
-    if (blackHoleLensing) {
-        blackHoleLensing.visible = !active;
-    }
-    if (blackHoleAccretionDisk) {
-        blackHoleAccretionDisk.visible = !active;
-    }
-    if (blackHoleAccretionInnerDisk) {
-        blackHoleAccretionInnerDisk.visible = !active;
-    }
-    if (blackHolePhotonRing) {
-        blackHolePhotonRing.visible = !active;
-    }
-    if (singularityOverlay) {
-        singularityOverlay.visible = !active && singularityOverlay.material.opacity > 0.002;
-    }
-
-    if (active) {
-        setCounterVoidMode(false);
-        singularityCollapse = 0;
-        blackHolePower = 0;
-        for (let i = shootingStars.length - 1; i >= 0; i -= 1) {
-            removeShootingStar(i);
-        }
-        for (let i = foodMeshes.length - 1; i >= 0; i -= 1) {
-            removeFoodAt(i);
-        }
-    }
 }
 
 function updateDualConstellationProgress(nowMs) {
@@ -1248,7 +1211,6 @@ function incrementSpaceCounter(nowMs = performance.now(), fromBlackout = false) 
     updateStarCounterDisplay();
 
     if (!dualConstellationActive && !companionConstellationLoading && !companionConstellation && spaceLaunchCount >= SPACE_COUNTER_TARGET) {
-        setDuoShowcaseMode(true);
         pendingCompanionFromBlackout = fromBlackout;
         loadCompanionConstellationFromImage(
             COMPANION_CONSTELLATION_IMAGE_URL,
@@ -1274,7 +1236,7 @@ function loadCompanionConstellationFromImage(imageUrl, fallbackUrl = null) {
     image.decoding = "async";
     image.onload = () => {
         companionConstellationLoading = false;
-        if (!duoShowcaseActive || spaceLaunchCount < SPACE_COUNTER_TARGET) {
+        if (spaceLaunchCount < SPACE_COUNTER_TARGET) {
             return;
         }
         buildCompanionConstellation(image);
@@ -1287,7 +1249,6 @@ function loadCompanionConstellationFromImage(imageUrl, fallbackUrl = null) {
             return;
         }
         console.warn("Companion constellation gorseli yuklenemedi.");
-        setDuoShowcaseMode(false);
     };
     image.src = imageUrl;
 }
@@ -1710,14 +1671,12 @@ function handleBlackholeBreakByPointer(nowMs = performance.now()) {
 
     const shouldResetCounter =
         hadCompanion ||
-        duoShowcaseActive ||
         (spaceLaunchCount > SPACE_COUNTER_TARGET && (counterVoidMode || singularityCollapse > 0.18));
     if (shouldResetCounter) {
         spaceLaunchCount = 0;
         updateStarCounterDisplay();
     }
 
-    setDuoShowcaseMode(false);
     companionSpawnedFromBlackout = false;
     pendingCompanionFromBlackout = false;
     setCounterVoidMode(false);
@@ -1963,25 +1922,25 @@ function updateCompanionConstellation(nowMs, delta = 1) {
         0,
         1
     );
-    const collapse = duoShowcaseActive ? 0 : singularityCollapse;
+    const collapse = singularityCollapse;
     const collapseVisibility = Math.max(0, 1 - collapse * 0.995);
     const powerBoost = 1 + blackHolePower * CONSTELLATION_VISIBILITY_POWER_MULT;
     const pulse = 0.92 + Math.sin(nowMs * 0.0019 + 0.7) * 0.06 + Math.sin(nowMs * 0.0035 + 1.8) * 0.03;
     const drawFlash = 1 + (1 - drawProgress) * 0.9;
-    const showcaseBoost = duoShowcaseActive ? 3.8 : 1;
-    const visibilityBoost = CONSTELLATION_VISIBILITY_MULT * powerBoost * collapseVisibility * drawFlash * showcaseBoost;
+    const dualBoost = dualConstellationActive ? 1.4 : 1;
+    const visibilityBoost = CONSTELLATION_VISIBILITY_MULT * powerBoost * collapseVisibility * drawFlash * dualBoost;
 
     companionConstellation.dustMaterial.opacity = Math.min(
-        duoShowcaseActive ? 0.88 : 0.23,
+        0.46,
         (0.043 + pulse * 0.013) * fadeProgress * drawProgress * visibilityBoost * CONSTELLATION_DUST_OPACITY_MULT
     );
     companionConstellation.nodeMaterial.opacity = Math.min(
-        duoShowcaseActive ? 0.99 : 0.42,
+        0.76,
         (0.11 + pulse * 0.026) * fadeProgress * drawProgress * visibilityBoost * CONSTELLATION_NODE_OPACITY_MULT
     );
 
     const nearLineOpacity = Math.min(
-        duoShowcaseActive ? 0.95 : 0.22,
+        0.52,
         (0.048 + pulse * 0.014) * fadeProgress * drawProgress * visibilityBoost * CONSTELLATION_LINE_OPACITY_MULT
     );
     if (companionConstellation.nearLineMaterial) {
@@ -2054,7 +2013,7 @@ function updateCompanionConstellation(nowMs, delta = 1) {
         }
         sparkle.geometry.attributes.color.needsUpdate = true;
         sparkle.material.opacity = activeCount > 0
-            ? THREE.MathUtils.clamp((duoShowcaseActive ? 0.58 : 0.24) + drawProgress * 0.62, 0, 0.98) * fadeProgress * collapseVisibility
+            ? THREE.MathUtils.clamp(0.26 + drawProgress * 0.62, 0, 0.98) * fadeProgress * collapseVisibility
             : 0;
     }
 
@@ -2171,9 +2130,6 @@ function bindEvents() {
                 return;
             }
             const now = performance.now();
-            if (duoShowcaseActive) {
-                return;
-            }
             if (isSingularityBlackout()) {
                 setCounterVoidMode(true);
                 incrementSpaceCounter(now, true);
@@ -2237,9 +2193,6 @@ function onPointerDown(event) {
     }
 
     if (event.button === 0) {
-        if (duoShowcaseActive) {
-            return;
-        }
         spawnFoodRow();
     }
 }
@@ -2307,7 +2260,7 @@ function onPointerMove(event) {
     if (movedEnough) {
         powerAnchorClientX = event.clientX;
         powerAnchorClientY = event.clientY;
-        if (duoShowcaseActive || singularityCollapse > 0.18 || isSingularityBlackout()) {
+        if (singularityCollapse > 0.18 || isSingularityBlackout()) {
             handleBlackholeBreakByPointer(now);
             return;
         }
@@ -3469,9 +3422,6 @@ function buildConstellation(image) {
 }
 
 function spawnFoodRow() {
-    if (duoShowcaseActive) {
-        return;
-    }
     const shuffledFoods = [...foods].sort(() => 0.5 - Math.random());
 
     if (Math.random() > 0.42) {
@@ -3595,7 +3545,7 @@ function createFoodMesh(text) {
 }
 
 function spawnFoodFromBlackHole() {
-    if (duoShowcaseActive || !scene || !camera || foods.length === 0) {
+    if (!scene || !camera || foods.length === 0) {
         return;
     }
 
@@ -3717,37 +3667,6 @@ function pointerAtZ(zValue, target) {
 }
 
 function updateBlackHole(delta, nowMs) {
-    if (duoShowcaseActive) {
-        pointerSmoothNDC.lerp(pointerTargetNDC, BLACKHOLE_LERP * delta);
-        updatePointerRay();
-        pointerAtZ(3, pointerWorld);
-
-        blackHoleRadius = THREE.MathUtils.lerp(blackHoleRadius, MIN_BLACKHOLE_RADIUS, 0.2 * delta);
-        blackHolePower = THREE.MathUtils.lerp(blackHolePower, 0, 0.2 * delta);
-        singularityCollapse = THREE.MathUtils.lerp(singularityCollapse, 0, 0.28 * delta);
-
-        if (blackHoleCore) {
-            blackHoleCore.visible = false;
-        }
-        if (blackHoleLensing) {
-            blackHoleLensing.visible = false;
-        }
-        if (blackHoleAccretionDisk) {
-            blackHoleAccretionDisk.visible = false;
-        }
-        if (blackHoleAccretionInnerDisk) {
-            blackHoleAccretionInnerDisk.visible = false;
-        }
-        if (blackHolePhotonRing) {
-            blackHolePhotonRing.visible = false;
-        }
-        if (singularityOverlay) {
-            singularityOverlay.material.opacity = 0;
-            singularityOverlay.visible = false;
-        }
-        return;
-    }
-
     const idleMs = nowMs - lastPointerMoveMs;
     let targetRadius = 0;
     let targetPower = 0;
@@ -4038,9 +3957,14 @@ function updateStars(delta, nowMs) {
     const rayY = pointerRayDir.y;
     const rayZ = pointerRayDir.z;
 
+    const passiveInfluenceRadius =
+        STAR_PASSIVE_INFLUENCE_RADIUS +
+        blackHoleRadius * 3.2 +
+        blackHolePower * 24;
     const influenceRadius = Math.max(
         STAR_MIN_INFLUENCE_RADIUS,
-        blackHoleRadius * STAR_INFLUENCE_MULT * (1 + blackHolePower * 0.22)
+        blackHoleRadius * STAR_INFLUENCE_MULT * (1 + blackHolePower * 0.22),
+        passiveInfluenceRadius
     );
     const influenceRadiusSq = influenceRadius * influenceRadius;
     const horizonRadius = blackHoleRadius * STAR_HORIZON_MULT * (1 + blackHolePower * 0.1);
@@ -4103,15 +4027,14 @@ function updateStars(delta, nowMs) {
                 const nx = dx / dist;
                 const ny = dy / dist;
                 const falloff = 1 - dist / influenceRadius;
-                const inverseDistSq = 1 / (distSq + 14);
+                const inverseDistSq = 1 / (distSq + 20);
+                const inverseDist = 1 / (dist + 8);
                 const collapseFalloff = hasCollapse
                     ? THREE.MathUtils.clamp(1 - (distSq / (collapseInfluenceRadiusSq + 0.0001)), 0, 1)
                     : 0;
-                const radialForce = gravityStrength * inverseDistSq * (
-                    0.38 +
-                    falloff * falloff * 2.6 +
-                    collapseFalloff * collapse * 2.4
-                );
+                const radialForce = gravityStrength *
+                    (inverseDist * 0.08 + inverseDistSq * 8.2) *
+                    (0.38 + falloff * falloff * 2.35 + collapseFalloff * collapse * 2.1);
                 const horizonBoost = 1 + Math.pow(horizonRadius / Math.max(dist, horizonRadius), 2.25) * 2.3;
                 lensingStrength = THREE.MathUtils.clamp(
                     Math.max(1 - dist / influenceRadius, collapseFalloff),
@@ -4213,9 +4136,14 @@ function updateFoodMeshes(delta, nowMs = performance.now()) {
     const rayY = pointerRayDir.y;
     const rayZ = pointerRayDir.z;
 
+    const passiveInfluenceRadius =
+        FOOD_PASSIVE_INFLUENCE_RADIUS +
+        blackHoleRadius * 3.6 +
+        blackHolePower * 28;
     const influenceRadius = Math.max(
         FOOD_MIN_INFLUENCE_RADIUS,
-        blackHoleRadius * FOOD_INFLUENCE_MULT * (1 + blackHolePower * 0.24)
+        blackHoleRadius * FOOD_INFLUENCE_MULT * (1 + blackHolePower * 0.24),
+        passiveInfluenceRadius
     );
     const influenceRadiusSq = influenceRadius * influenceRadius;
     const horizonRadius = blackHoleRadius * FOOD_HORIZON_MULT * (1 + blackHolePower * 0.12);
@@ -4223,7 +4151,7 @@ function updateFoodMeshes(delta, nowMs = performance.now()) {
     const collapseInfluenceRadius = STAR_FIELD_WIDTH * THREE.MathUtils.clamp(0.045 + collapse * 1.02, 0, 1.25);
     const collapseInfluenceRadiusSq = collapseInfluenceRadius * collapseInfluenceRadius;
     const collapseCaptureRadius = 5 + collapse * (SINGULARITY_CAPTURE_RADIUS_MAX * 0.14);
-    const gravityStrength = FOOD_GRAVITY_BASE * (1 + blackHolePower * 1.2);
+    const gravityStrength = FOOD_GRAVITY_BASE * (1 + blackHolePower * 1.2 + collapse * 1.1);
     const pullForceBase = FOOD_PULL_FORCE * (1 + blackHolePower * 0.75);
     const swirlForceBase = FOOD_SWIRL_FORCE * (1 + blackHolePower * 0.5);
     const flowSpeedMul = 1 + blackHolePower * FOOD_FLOW_POWER_MULT;
@@ -4260,8 +4188,11 @@ function updateFoodMeshes(delta, nowMs = performance.now()) {
                 const tx = -ny;
                 const ty = nx;
                 const falloff = 1 - dist / influenceRadius;
-                const inverseDistSq = 1 / (distSq + 16);
-                const radialForce = gravityStrength * inverseDistSq * (0.34 + falloff * falloff * 2.5);
+                const inverseDistSq = 1 / (distSq + 24);
+                const inverseDist = 1 / (dist + 10);
+                const radialForce = gravityStrength *
+                    (inverseDist * 0.09 + inverseDistSq * 7.4) *
+                    (0.34 + falloff * falloff * 2.25);
                 const horizonBoost = 1 + Math.pow(horizonRadius / Math.max(dist, horizonRadius), 2.2) * 2.1;
 
                 if (isRightPointerDown && !hasCollapse) {
@@ -4401,25 +4332,26 @@ function updateConstellation(nowMs, delta = 1) {
     const entryFlash = 1 + Math.pow(1 - flashProgress, 2) * CONSTELLATION_ENTRY_FLASH_BOOST;
     const sparkleBoost = getConstellationSparkleBoost(nowMs);
     const powerBoost = 1 + blackHolePower * CONSTELLATION_VISIBILITY_POWER_MULT;
-    const collapse = duoShowcaseActive ? 0 : singularityCollapse;
+    const collapse = singularityCollapse;
     const collapseVisibility = Math.max(0, 1 - collapse * 0.995);
-    const showcaseBoost = duoShowcaseActive ? 3.4 : 1;
-    const visibilityBoost = CONSTELLATION_VISIBILITY_MULT * powerBoost * entryFlash * sparkleBoost * collapseVisibility * showcaseBoost;
+    const dualBoost = dualConstellationActive ? 1.55 : 1;
+    const visibilityBoost =
+        CONSTELLATION_VISIBILITY_MULT * powerBoost * entryFlash * sparkleBoost * collapseVisibility * dualBoost;
     const pulse =
         0.92 +
         Math.sin(nowMs * 0.0017) * 0.06 +
         Math.sin(nowMs * 0.0032 + 1.1) * 0.03;
     constellationDustMaterial.opacity = Math.min(
-        duoShowcaseActive ? 0.84 : 0.24,
+        dualConstellationActive ? 0.34 : 0.24,
         (0.045 + pulse * 0.014) * fadeProgress * visibilityBoost * CONSTELLATION_DUST_OPACITY_MULT
     );
     constellationNodeMaterial.opacity = Math.min(
-        duoShowcaseActive ? 0.98 : 0.44,
+        dualConstellationActive ? 0.66 : 0.44,
         (0.12 + pulse * 0.028) * fadeProgress * visibilityBoost * CONSTELLATION_NODE_OPACITY_MULT
     );
 
     const nearLineOpacity = Math.min(
-        duoShowcaseActive ? 0.86 : 0.22,
+        dualConstellationActive ? 0.34 : 0.22,
         (0.05 + pulse * 0.016) * fadeProgress * visibilityBoost * CONSTELLATION_LINE_OPACITY_MULT
     );
     const lineRevealProgress = THREE.MathUtils.clamp(
@@ -4434,7 +4366,7 @@ function updateConstellation(nowMs, delta = 1) {
         1
     );
     const lineSettleMul = THREE.MathUtils.lerp(1, CONSTELLATION_LINE_SETTLE_MIN, lineSettleProgress);
-    const lineOpacity = Math.min(duoShowcaseActive ? 0.92 : 0.34, nearLineOpacity * lineDrawBoost * lineSettleMul);
+    const lineOpacity = Math.min(dualConstellationActive ? 0.52 : 0.34, nearLineOpacity * lineDrawBoost * lineSettleMul);
 
     if (constellationLineMaterial) {
         constellationLineMaterial.opacity = lineOpacity;
@@ -4495,36 +4427,32 @@ function animate(nowMs = performance.now()) {
     updateDualConstellationProgress(nowMs);
 
     updateBlackHole(delta, nowMs);
-    if (!duoShowcaseActive) {
-        setCounterVoidMode(isSingularityBlackout());
-    }
+    setCounterVoidMode(isSingularityBlackout());
     updateStarCounterVisual(nowMs);
 
-    if (!duoShowcaseActive) {
-        const dynamicSpawnInterval = Math.max(
-            FOOD_MIN_SPAWN_INTERVAL_MS,
-            FOOD_SPAWN_INTERVAL_MS / (1 + blackHolePower * FOOD_SPAWN_POWER_MULT)
-        );
-        const maxBacklog = dynamicSpawnInterval * (SPAWN_MAX_PER_FRAME + 1);
-        spawnAccumulatorMs = Math.min(spawnAccumulatorMs + frameDeltaMs, maxBacklog);
+    const dynamicSpawnInterval = Math.max(
+        FOOD_MIN_SPAWN_INTERVAL_MS,
+        FOOD_SPAWN_INTERVAL_MS / (1 + blackHolePower * FOOD_SPAWN_POWER_MULT)
+    );
+    const maxBacklog = dynamicSpawnInterval * (SPAWN_MAX_PER_FRAME + 1);
+    spawnAccumulatorMs = Math.min(spawnAccumulatorMs + frameDeltaMs, maxBacklog);
 
-        let spawnsThisFrame = 0;
-        while (spawnAccumulatorMs >= dynamicSpawnInterval && spawnsThisFrame < SPAWN_MAX_PER_FRAME) {
-            spawnAccumulatorMs -= dynamicSpawnInterval;
-            spawnFoodRow();
-            spawnsThisFrame += 1;
-        }
-        if (spawnsThisFrame >= SPAWN_MAX_PER_FRAME && spawnAccumulatorMs >= dynamicSpawnInterval) {
-            // Eski backlog'u biriktirmeden akisa geri don.
-            spawnAccumulatorMs = dynamicSpawnInterval * 0.35;
-        }
-
-        updateNebula(nowMs);
-        updateDeepStars(delta, nowMs);
-        updateShootingStars(delta, nowMs);
-        updateStars(delta, nowMs);
-        updateFoodMeshes(delta, nowMs);
+    let spawnsThisFrame = 0;
+    while (spawnAccumulatorMs >= dynamicSpawnInterval && spawnsThisFrame < SPAWN_MAX_PER_FRAME) {
+        spawnAccumulatorMs -= dynamicSpawnInterval;
+        spawnFoodRow();
+        spawnsThisFrame += 1;
     }
+    if (spawnsThisFrame >= SPAWN_MAX_PER_FRAME && spawnAccumulatorMs >= dynamicSpawnInterval) {
+        // Eski backlog'u biriktirmeden akisa geri don.
+        spawnAccumulatorMs = dynamicSpawnInterval * 0.35;
+    }
+
+    updateNebula(nowMs);
+    updateDeepStars(delta, nowMs);
+    updateShootingStars(delta, nowMs);
+    updateStars(delta, nowMs);
+    updateFoodMeshes(delta, nowMs);
 
     updateConstellation(nowMs, delta);
     updateCompanionConstellation(nowMs, delta);
