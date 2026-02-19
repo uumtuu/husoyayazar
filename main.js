@@ -17,7 +17,7 @@ const foods = [
     "ıslak hamburger"
 ];
 
-const BUILD_ID = "20260219-constellation-v31-star-material-fallback";
+const BUILD_ID = "20260219-constellation-v32-counter-digital-refresh";
 
 const BASE_STAR_COUNT = 22000;
 const MIN_STAR_COUNT = 7000;
@@ -1271,14 +1271,14 @@ function drawCounterSevenSegmentCanvas(valueText, voidMode, styleVariant) {
     const rawValue = Number(valueText || 0);
     const warmUnlock = rawValue >= SPACE_COUNTER_TARGET ? 1 : 0;
     const stylePhase = styleVariant >= 0 ? ((styleVariant % 11) / 11) : 0;
-    const hue = 196 - warmUnlock * 18 + stylePhase * 22;
-    const sat = 0.46 + warmUnlock * 0.2;
+    const hue = 202 - warmUnlock * 20 + stylePhase * 18;
+    const sat = 0.52 + warmUnlock * 0.16;
 
-    const marginX = voidMode ? width * 0.075 : width * 0.15;
-    const marginY = voidMode ? height * 0.14 : height * 0.24;
+    const marginX = voidMode ? width * 0.075 : width * 0.13;
+    const marginY = voidMode ? height * 0.14 : height * 0.2;
     const contentW = Math.max(20, width - marginX * 2);
     const contentH = Math.max(20, height - marginY * 2);
-    const digitGap = contentW * (voidMode ? 0.052 : 0.075) / Math.max(1, digitCount);
+    const digitGap = contentW * (voidMode ? 0.06 : 0.09) / Math.max(1, digitCount);
     const digitW = (contentW - digitGap * Math.max(0, digitCount - 1)) / digitCount;
     const digitH = contentH;
     const startX = (width - (digitW * digitCount + digitGap * Math.max(0, digitCount - 1))) * 0.5;
@@ -1305,34 +1305,67 @@ function drawCounterSevenSegmentCanvas(valueText, voidMode, styleVariant) {
         ];
     };
 
-    const nodes = [];
-    const edges = [];
-    const addConstellationSegment = (ax, ay, bx, by, seed, density) => {
-        let prevIndex = -1;
-        for (let i = 0; i <= density; i += 1) {
-            const t = i / Math.max(1, density);
-            const px = THREE.MathUtils.lerp(ax, bx, t);
-            const py = THREE.MathUtils.lerp(ay, by, t);
-            const dx = bx - ax;
-            const dy = by - ay;
-            const len = Math.max(0.001, Math.hypot(dx, dy));
-            const nx = -dy / len;
-            const ny = dx / len;
-            const jitter = (seededUnit(seed * 31.17 + i * 7.31) - 0.5) * (voidMode ? 5.8 : 2.3);
-            const x = px + nx * jitter;
-            const y = py + ny * jitter;
+    counterDrawTmpColor.setHSL(hue / 360, sat, voidMode ? 0.84 : 0.78);
+    const coreColor = counterColorToRgba(counterDrawTmpColor, 0.98);
+    counterDrawTmpColor.setHSL((hue + 9) / 360, 0.68, 0.66 + warmUnlock * 0.1);
+    const glowColor = counterColorToRgba(counterDrawTmpColor, voidMode ? 0.56 : 0.34);
+    counterDrawTmpColor.setHSL((hue + 5) / 360, 0.25, 0.84);
+    const strokeColor = counterColorToRgba(counterDrawTmpColor, voidMode ? 0.5 : 0.32);
+    const outerStroke = counterColorToRgba(counterDrawTmpColor, voidMode ? 0.2 : 0.12);
 
-            const nodeIndex = nodes.length;
-            nodes.push({
-                x,
-                y,
-                phase: seededUnit(seed * 13.11 + i * 3.9) * Math.PI * 2,
-                intensity: 0.64 + seededUnit(seed * 19.71 + i * 5.13) * 0.52
-            });
-            if (prevIndex >= 0) {
-                edges.push([prevIndex, nodeIndex, 0.78]);
+    const drawDigitalStellarSegment = (ax, ay, bx, by, seed) => {
+        const dx = bx - ax;
+        const dy = by - ay;
+        const len = Math.max(0.001, Math.hypot(dx, dy));
+        const tx = dx / len;
+        const ty = dy / len;
+        const nx = -ty;
+        const ny = tx;
+        const dashLen = voidMode ? 42 : 26;
+        const gapLen = voidMode ? 14 : 8;
+        const starStep = voidMode ? 4.6 : 3.1;
+
+        // Outer halo line
+        ctx.save();
+        ctx.beginPath();
+        ctx.strokeStyle = outerStroke;
+        ctx.lineWidth = voidMode ? 6.2 : 4.1;
+        ctx.lineCap = "round";
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(bx, by);
+        ctx.stroke();
+        ctx.restore();
+
+        // Main segmented digital line
+        ctx.save();
+        ctx.beginPath();
+        ctx.strokeStyle = strokeColor;
+        ctx.lineWidth = voidMode ? 2.5 : 1.8;
+        ctx.setLineDash([dashLen, gapLen]);
+        ctx.lineCap = "round";
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(bx, by);
+        ctx.stroke();
+        ctx.restore();
+
+        // Star particles over dashes
+        for (let dist = 0; dist <= len; dist += starStep) {
+            const dashCycle = dashLen + gapLen;
+            if ((dist % dashCycle) > dashLen) {
+                continue;
             }
-            prevIndex = nodeIndex;
+            const x = ax + tx * dist + nx * ((seededUnit(seed * 13.1 + dist * 0.17) - 0.5) * (voidMode ? 1.2 : 0.7));
+            const y = ay + ty * dist + ny * ((seededUnit(seed * 17.9 + dist * 0.13) - 0.5) * (voidMode ? 1.2 : 0.7));
+            const coreR = (voidMode ? 1.65 : 1.06) * (0.74 + seededUnit(seed * 29.3 + dist * 0.07) * 0.52);
+            const glowR = coreR * (voidMode ? 3.5 : 2.8);
+            const grad = ctx.createRadialGradient(x, y, 0, x, y, glowR);
+            grad.addColorStop(0, coreColor);
+            grad.addColorStop(0.36, glowColor);
+            grad.addColorStop(1, "rgba(0,0,0,0)");
+            ctx.beginPath();
+            ctx.fillStyle = grad;
+            ctx.arc(x, y, glowR, 0, Math.PI * 2);
+            ctx.fill();
         }
     };
 
@@ -1343,73 +1376,13 @@ function drawCounterSevenSegmentCanvas(valueText, voidMode, styleVariant) {
         const active = digitToSevenSegments(text[d]);
         for (let s = 0; s < active.length; s += 1) {
             const seg = segments[active[s]];
-            addConstellationSegment(seg[0], seg[1], seg[2], seg[3], (d + 1) * 17 + active[s] * 5, voidMode ? 15 : 9);
+            drawDigitalStellarSegment(seg[0], seg[1], seg[2], seg[3], (d + 1) * 31 + active[s] * 11);
         }
     }
 
-    // Connect nearest stars to get a constellation-web look.
-    const linkDistance = (voidMode ? 46 : 24);
-    const linkDistanceSq = linkDistance * linkDistance;
-    for (let i = 0; i < nodes.length; i += 1) {
-        let links = 0;
-        for (let j = i + 1; j < nodes.length && links < 2; j += 1) {
-            const dx = nodes[j].x - nodes[i].x;
-            const dy = nodes[j].y - nodes[i].y;
-            const distSq = dx * dx + dy * dy;
-            if (distSq > linkDistanceSq) {
-                continue;
-            }
-            const chance = 0.18 + (1 - distSq / linkDistanceSq) * 0.42;
-            if (seededUnit((i + 1) * 23.17 + (j + 1) * 9.31 + stylePhase * 7.11) > chance) {
-                continue;
-            }
-            edges.push([i, j, 0.38 + (1 - distSq / linkDistanceSq) * 0.36]);
-            links += 1;
-        }
-    }
-
-    counterDrawTmpColor.setHSL(hue / 360, sat, voidMode ? 0.82 : 0.74);
-    const starCore = counterColorToRgba(counterDrawTmpColor, 0.98);
-    counterDrawTmpColor.setHSL((hue + 9) / 360, 0.68, 0.64 + warmUnlock * 0.12);
-    const starGlow = counterColorToRgba(counterDrawTmpColor, voidMode ? 0.54 : 0.34);
-    counterDrawTmpColor.setHSL((hue + 4) / 360, 0.28, 0.86);
-    const edgeColor = counterColorToRgba(counterDrawTmpColor, voidMode ? 0.25 : 0.15);
-
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    for (let i = 0; i < edges.length; i += 1) {
-        const edge = edges[i];
-        const a = nodes[edge[0]];
-        const b = nodes[edge[1]];
-        if (!a || !b) {
-            continue;
-        }
-        ctx.beginPath();
-        ctx.lineWidth = (voidMode ? 1.8 : 1.2) * edge[2];
-        ctx.strokeStyle = edgeColor;
-        ctx.moveTo(a.x, a.y);
-        ctx.lineTo(b.x, b.y);
-        ctx.stroke();
-    }
-
-    for (let i = 0; i < nodes.length; i += 1) {
-        const node = nodes[i];
-        const pulse = 0.82 + Math.sin(node.phase + stylePhase * 6.0) * 0.18;
-        const coreR = (voidMode ? 2.05 : 1.22) * node.intensity * pulse;
-        const glowR = coreR * (voidMode ? 3.6 : 2.9);
-        const grad = ctx.createRadialGradient(node.x, node.y, 0, node.x, node.y, glowR);
-        grad.addColorStop(0, starCore);
-        grad.addColorStop(0.34, starGlow);
-        grad.addColorStop(1, "rgba(0,0,0,0)");
-        ctx.beginPath();
-        ctx.fillStyle = grad;
-        ctx.arc(node.x, node.y, glowR, 0, Math.PI * 2);
-        ctx.fill();
-    }
-
-    const ambientCount = voidMode ? 240 : 84;
+    const ambientCount = voidMode ? 220 : 64;
     counterDrawTmpColor.setHSL(hue / 360, 0.2, 0.74);
-    ctx.fillStyle = counterColorToRgba(counterDrawTmpColor, voidMode ? 0.16 : 0.09);
+    ctx.fillStyle = counterColorToRgba(counterDrawTmpColor, voidMode ? 0.16 : 0.085);
     for (let i = 0; i < ambientCount; i += 1) {
         const sx = seededUnit((i + 1) * 17.37 + stylePhase * 7.1 + text.length * 0.9) * width;
         const sy = seededUnit((i + 1) * 29.11 + stylePhase * 11.4 + text.length * 0.53) * height;
