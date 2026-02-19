@@ -17,7 +17,7 @@ const foods = [
     "ıslak hamburger"
 ];
 
-const BUILD_ID = "20260219-constellation-v30-starfield-counter-companion-fix";
+const BUILD_ID = "20260219-constellation-v31-star-material-fallback";
 
 const BASE_STAR_COUNT = 22000;
 const MIN_STAR_COUNT = 7000;
@@ -2909,9 +2909,15 @@ function createStars() {
     const starGeometry = new THREE.BufferGeometry();
     starGeometry.setAttribute("position", new THREE.BufferAttribute(starPositions, 3));
     starGeometry.setAttribute("color", new THREE.BufferAttribute(starColors, 3));
-    starGeometry.setAttribute("aSize", new THREE.BufferAttribute(starSizes, 1));
-
-    const starMaterial = createStarPointShaderMaterial(STAR_SHADER_BASE_SIZE, STAR_SHADER_OPACITY);
+    const starMaterial = new THREE.PointsMaterial({
+        size: 1.15,
+        sizeAttenuation: true,
+        transparent: true,
+        opacity: STAR_SHADER_OPACITY,
+        depthWrite: false,
+        depthTest: true,
+        vertexColors: true
+    });
 
     stars = new THREE.Points(starGeometry, starMaterial);
     scene.add(stars);
@@ -2972,9 +2978,15 @@ function createDeepStars() {
     const deepGeometry = new THREE.BufferGeometry();
     deepGeometry.setAttribute("position", new THREE.BufferAttribute(deepStarPositions, 3));
     deepGeometry.setAttribute("color", new THREE.BufferAttribute(deepStarColors, 3));
-    deepGeometry.setAttribute("aSize", new THREE.BufferAttribute(deepStarSizes, 1));
-
-    const deepMaterial = createStarPointShaderMaterial(DEEP_STAR_SHADER_BASE_SIZE, DEEP_STAR_SHADER_OPACITY);
+    const deepMaterial = new THREE.PointsMaterial({
+        size: 0.82,
+        sizeAttenuation: true,
+        transparent: true,
+        opacity: DEEP_STAR_SHADER_OPACITY,
+        depthWrite: false,
+        depthTest: true,
+        vertexColors: true
+    });
 
     deepStars = new THREE.Points(deepGeometry, deepMaterial);
     deepStars.renderOrder = 0;
