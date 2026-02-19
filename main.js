@@ -275,9 +275,13 @@ let starCounterCanvas = null;
 let starCounterContext = null;
 let starCounterSparkleMaterials = [];
 let starCounterGlowUntilMs = 0;
+let counterVoidMode = false;
 let dualConstellationActive = false;
 let dualConstellationActivatedAtMs = 0;
 let dualConstellationProgress = 0;
+let pendingCompanionFromBlackout = false;
+let companionSpawnedFromBlackout = false;
+const companionBursts = [];
 
 function getPlaneHalfExtentsAtZ(zValue) {
     if (!camera) {
@@ -900,47 +904,83 @@ function updateStarCounterDisplay() {
     }
 
     const ctx = starCounterContext;
-    const width = starCounterCanvas.width;
-    const height = starCounterCanvas.height;
-    const radius = 22;
     const valueDigits = Math.max(2, String(SPACE_COUNTER_TARGET).length);
     const value = String(spaceLaunchCount).padStart(valueDigits, "0");
     const target = String(SPACE_COUNTER_TARGET).padStart(valueDigits, "0");
+    const width = counterVoidMode ? 460 : 320;
+    const height = counterVoidMode ? 980 : 96;
+
+    if (starCounterCanvas.width !== width || starCounterCanvas.height !== height) {
+        starCounterCanvas.width = width;
+        starCounterCanvas.height = height;
+    }
 
     ctx.clearRect(0, 0, width, height);
-    ctx.beginPath();
-    ctx.moveTo(radius, 10);
-    ctx.lineTo(width - radius, 10);
-    ctx.quadraticCurveTo(width - 10, 10, width - 10, 10 + radius);
-    ctx.lineTo(width - 10, height - 10 - radius);
-    ctx.quadraticCurveTo(width - 10, height - 10, width - 10 - radius, height - 10);
-    ctx.lineTo(10 + radius, height - 10);
-    ctx.quadraticCurveTo(10, height - 10, 10, height - 10 - radius);
-    ctx.lineTo(10, 10 + radius);
-    ctx.quadraticCurveTo(10, 10, 10 + radius, 10);
-    ctx.closePath();
 
-    const glow = ctx.createLinearGradient(0, 0, width, 0);
-    glow.addColorStop(0, "rgba(10,16,30,0.08)");
-    glow.addColorStop(0.55, "rgba(20,34,58,0.2)");
-    glow.addColorStop(1, "rgba(10,16,30,0.08)");
-    ctx.fillStyle = glow;
-    ctx.fill();
-    ctx.strokeStyle = "rgba(146, 196, 244, 0.3)";
-    ctx.lineWidth = 1.4;
-    ctx.stroke();
+    if (counterVoidMode) {
+        const bg = ctx.createLinearGradient(0, 0, 0, height);
+        bg.addColorStop(0, "rgba(0,0,0,0)");
+        bg.addColorStop(0.2, "rgba(8,14,24,0.36)");
+        bg.addColorStop(0.5, "rgba(10,18,32,0.54)");
+        bg.addColorStop(0.8, "rgba(8,14,24,0.36)");
+        bg.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, width, height);
 
-    ctx.font = "600 30px \"Trebuchet MS\", \"Segoe UI\", sans-serif";
-    ctx.fillStyle = "rgba(214,236,255,0.9)";
-    ctx.textAlign = "left";
-    ctx.textBaseline = "middle";
-    ctx.fillText("* *", 28, 50);
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.shadowColor = "rgba(180, 228, 255, 0.48)";
+        ctx.shadowBlur = 24;
+        ctx.fillStyle = "rgba(238, 248, 255, 0.96)";
+        ctx.font = "700 114px \"Trebuchet MS\", \"Segoe UI\", sans-serif";
+        ctx.fillText(`${value}`, width * 0.5, height * 0.31);
+        ctx.font = "600 72px \"Trebuchet MS\", \"Segoe UI\", sans-serif";
+        ctx.fillStyle = "rgba(200, 224, 255, 0.9)";
+        ctx.fillText("/", width * 0.5, height * 0.49);
+        ctx.font = "700 114px \"Trebuchet MS\", \"Segoe UI\", sans-serif";
+        ctx.fillStyle = "rgba(255, 234, 178, 0.94)";
+        ctx.fillText(`${target}`, width * 0.5, height * 0.67);
+        ctx.font = "600 56px \"Trebuchet MS\", \"Segoe UI\", sans-serif";
+        ctx.fillStyle = "rgba(220, 238, 255, 0.88)";
+        ctx.fillText("*", width * 0.5, height * 0.12);
+        ctx.fillText("*", width * 0.5, height * 0.86);
+        ctx.shadowBlur = 0;
+    } else {
+        const radius = 22;
+        ctx.beginPath();
+        ctx.moveTo(radius, 10);
+        ctx.lineTo(width - radius, 10);
+        ctx.quadraticCurveTo(width - 10, 10, width - 10, 10 + radius);
+        ctx.lineTo(width - 10, height - 10 - radius);
+        ctx.quadraticCurveTo(width - 10, height - 10, width - 10 - radius, height - 10);
+        ctx.lineTo(10 + radius, height - 10);
+        ctx.quadraticCurveTo(10, height - 10, 10, height - 10 - radius);
+        ctx.lineTo(10, 10 + radius);
+        ctx.quadraticCurveTo(10, 10, 10 + radius, 10);
+        ctx.closePath();
 
-    ctx.font = "700 27px \"Trebuchet MS\", \"Segoe UI\", sans-serif";
-    ctx.fillStyle = spaceLaunchCount >= SPACE_COUNTER_TARGET
-        ? "rgba(255, 230, 170, 0.98)"
-        : "rgba(225, 242, 255, 0.96)";
-    ctx.fillText(`${value} / ${target}`, 106, 50);
+        const glow = ctx.createLinearGradient(0, 0, width, 0);
+        glow.addColorStop(0, "rgba(10,16,30,0.08)");
+        glow.addColorStop(0.55, "rgba(20,34,58,0.2)");
+        glow.addColorStop(1, "rgba(10,16,30,0.08)");
+        ctx.fillStyle = glow;
+        ctx.fill();
+        ctx.strokeStyle = "rgba(146, 196, 244, 0.3)";
+        ctx.lineWidth = 1.4;
+        ctx.stroke();
+
+        ctx.font = "600 30px \"Trebuchet MS\", \"Segoe UI\", sans-serif";
+        ctx.fillStyle = "rgba(214,236,255,0.9)";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillText("* *", 28, 50);
+
+        ctx.font = "700 27px \"Trebuchet MS\", \"Segoe UI\", sans-serif";
+        ctx.fillStyle = spaceLaunchCount >= SPACE_COUNTER_TARGET
+            ? "rgba(255, 230, 170, 0.98)"
+            : "rgba(225, 242, 255, 0.96)";
+        ctx.fillText(`${value} / ${target}`, 106, 50);
+    }
 
     starCounterTexture.needsUpdate = true;
 }
@@ -951,13 +991,33 @@ function updateStarCounterVisual(nowMs) {
     }
 
     const { halfWidth, halfHeight } = getPlaneHalfExtentsAtZ(STAR_COUNTER_WORLD_Z);
-    starCounterGroup.position.set(
-        camera.position.x + halfWidth - STAR_COUNTER_MARGIN_X,
-        camera.position.y + halfHeight - STAR_COUNTER_MARGIN_Y,
-        STAR_COUNTER_WORLD_Z
-    );
+    if (counterVoidMode) {
+        starCounterGroup.position.set(
+            camera.position.x,
+            camera.position.y,
+            STAR_COUNTER_WORLD_Z
+        );
+    } else {
+        starCounterGroup.position.set(
+            camera.position.x + halfWidth - STAR_COUNTER_MARGIN_X,
+            camera.position.y + halfHeight - STAR_COUNTER_MARGIN_Y,
+            STAR_COUNTER_WORLD_Z
+        );
+    }
     starCounterGroup.quaternion.copy(camera.quaternion);
-    starCounterGroup.scale.set(STAR_COUNTER_WORLD_SCALE / 36, STAR_COUNTER_WORLD_SCALE / 36, 1);
+    if (counterVoidMode) {
+        const verticalScale = (halfHeight * 1.7) / 36;
+        const horizontalScale = Math.max(verticalScale * 0.52, 3.8);
+        starCounterGroup.scale.set(horizontalScale, verticalScale, 1);
+    } else {
+        starCounterGroup.scale.set(STAR_COUNTER_WORLD_SCALE / 36, STAR_COUNTER_WORLD_SCALE / 36, 1);
+    }
+
+    if (!counterVoidMode && singularityCollapse > 0.0001) {
+        pointerAtZ(STAR_COUNTER_WORLD_Z, singularityVectorA);
+        const pullLerp = THREE.MathUtils.clamp(0.01 + singularityCollapse * 0.16, 0, 0.34);
+        starCounterGroup.position.lerp(singularityVectorA, pullLerp);
+    }
 
     const twinkle = 0.72 + Math.sin(nowMs * 0.0037 + 0.4) * 0.12 + Math.sin(nowMs * 0.0064 + 1.8) * 0.06;
     const glowLeft = Math.max(0, starCounterGlowUntilMs - nowMs);
@@ -985,6 +1045,24 @@ function updateStarCounterVisual(nowMs) {
     }
 }
 
+function setCounterVoidMode(active) {
+    if (counterVoidMode === active) {
+        return;
+    }
+    counterVoidMode = active;
+    updateStarCounterDisplay();
+}
+
+function isSingularityBlackout() {
+    if (singularityCollapse >= 0.92) {
+        return true;
+    }
+    if (singularityOverlay && singularityOverlay.material && singularityOverlay.material.opacity >= 0.95) {
+        return true;
+    }
+    return false;
+}
+
 function updateDualConstellationProgress(nowMs) {
     if (!dualConstellationActive) {
         dualConstellationProgress = 0;
@@ -999,16 +1077,24 @@ function updateDualConstellationProgress(nowMs) {
     dualConstellationProgress = t * t * (3 - 2 * t);
 }
 
-function incrementSpaceCounter(nowMs = performance.now()) {
+function incrementSpaceCounter(nowMs = performance.now(), fromBlackout = false) {
     spaceLaunchCount += 1;
     starCounterGlowUntilMs = nowMs + 360;
     updateStarCounterDisplay();
 
     if (!dualConstellationActive && !companionConstellationLoading && !companionConstellation && spaceLaunchCount >= SPACE_COUNTER_TARGET) {
+        pendingCompanionFromBlackout = fromBlackout;
         loadCompanionConstellationFromImage(
             COMPANION_CONSTELLATION_IMAGE_URL,
             COMPANION_CONSTELLATION_FALLBACK_IMAGE_URL
         );
+
+        if (fromBlackout) {
+            lastPointerMoveMs = nowMs;
+            blackHolePower = 0;
+            singularityCollapse = 0;
+            setCounterVoidMode(false);
+        }
     }
 }
 
@@ -1323,6 +1409,149 @@ function disposeCompanionConstellation() {
     companionConstellation = null;
 }
 
+function triggerCompanionBurst(nowMs = performance.now()) {
+    if (!scene || !companionConstellation || !companionConstellation.group) {
+        return;
+    }
+
+    const payloads = [
+        companionConstellation.nodePayload,
+        companionConstellation.dustPayload
+    ];
+    const samples = [];
+
+    for (let p = 0; p < payloads.length; p += 1) {
+        const payload = payloads[p];
+        if (!payload || !payload.live) {
+            continue;
+        }
+        const step = p === 0 ? 1 : 4;
+        for (let i = 0; i < payload.live.length; i += 3 * step) {
+            samples.push(payload.live[i], payload.live[i + 1], payload.live[i + 2]);
+            if (samples.length >= 720) {
+                break;
+            }
+        }
+        if (samples.length >= 720) {
+            break;
+        }
+    }
+
+    if (samples.length < 18) {
+        return;
+    }
+
+    const count = Math.floor(samples.length / 3);
+    const positions = new Float32Array(count * 3);
+    const velocities = new Float32Array(count * 3);
+    const group = companionConstellation.group;
+    const center = new THREE.Vector3(
+        group.position.x,
+        group.position.y,
+        group.position.z
+    );
+
+    for (let i = 0; i < count; i += 1) {
+        const idx3 = i * 3;
+        const localX = samples[idx3];
+        const localY = samples[idx3 + 1];
+        const localZ = samples[idx3 + 2];
+        const worldX = group.position.x + localX * CONSTELLATION_SCALE;
+        const worldY = group.position.y + localY * CONSTELLATION_SCALE;
+        const worldZ = group.position.z + localZ * 0.1;
+
+        positions[idx3] = worldX;
+        positions[idx3 + 1] = worldY;
+        positions[idx3 + 2] = worldZ;
+
+        const dx = worldX - center.x;
+        const dy = worldY - center.y;
+        const dist = Math.hypot(dx, dy) + 0.0001;
+        const nx = dx / dist;
+        const ny = dy / dist;
+        const speed = 0.42 + Math.random() * 1.32;
+        velocities[idx3] = nx * speed + (Math.random() - 0.5) * 0.22;
+        velocities[idx3 + 1] = ny * speed + (Math.random() - 0.5) * 0.22;
+        velocities[idx3 + 2] = (Math.random() - 0.5) * 0.14;
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    const material = new THREE.PointsMaterial({
+        color: 0xeaf4ff,
+        size: 1.5,
+        transparent: true,
+        opacity: 0.96,
+        depthWrite: false,
+        depthTest: true,
+        blending: THREE.AdditiveBlending
+    });
+    const points = new THREE.Points(geometry, material);
+    points.renderOrder = 24;
+    scene.add(points);
+
+    companionBursts.push({
+        points,
+        geometry,
+        material,
+        positions,
+        velocities,
+        bornMs: nowMs,
+        lifeMs: 980
+    });
+}
+
+function updateCompanionBursts(delta, nowMs) {
+    for (let i = companionBursts.length - 1; i >= 0; i -= 1) {
+        const burst = companionBursts[i];
+        const age = nowMs - burst.bornMs;
+        const t = age / burst.lifeMs;
+        if (t >= 1) {
+            scene.remove(burst.points);
+            burst.geometry.dispose();
+            burst.material.dispose();
+            companionBursts.splice(i, 1);
+            continue;
+        }
+
+        const drag = Math.pow(0.94, delta);
+        for (let p = 0; p < burst.positions.length; p += 3) {
+            burst.velocities[p] *= drag;
+            burst.velocities[p + 1] *= drag;
+            burst.velocities[p + 2] *= drag;
+            burst.positions[p] += burst.velocities[p] * delta;
+            burst.positions[p + 1] += burst.velocities[p + 1] * delta;
+            burst.positions[p + 2] += burst.velocities[p + 2] * delta;
+        }
+        burst.geometry.attributes.position.needsUpdate = true;
+        burst.material.opacity = THREE.MathUtils.clamp(1 - t * t, 0, 1);
+    }
+}
+
+function handleBlackholeBreakByPointer(nowMs = performance.now()) {
+    const hadCompanion = Boolean(companionConstellation);
+    if (hadCompanion) {
+        triggerCompanionBurst(nowMs);
+        disposeCompanionConstellation();
+        dualConstellationActive = false;
+        dualConstellationProgress = 0;
+        dualConstellationActivatedAtMs = 0;
+    }
+
+    if (hadCompanion || companionSpawnedFromBlackout || counterVoidMode) {
+        spaceLaunchCount = 0;
+        updateStarCounterDisplay();
+    }
+
+    companionSpawnedFromBlackout = false;
+    pendingCompanionFromBlackout = false;
+    setCounterVoidMode(false);
+
+    lastPointerMoveMs = nowMs;
+    singularityCollapse = 0;
+    blackHolePower = 0;
+}
+
 function buildCompanionConstellation(image) {
     if (!scene) {
         return;
@@ -1459,6 +1688,8 @@ function buildCompanionConstellation(image) {
     scene.add(group);
     dualConstellationActive = true;
     dualConstellationActivatedAtMs = performance.now();
+    companionSpawnedFromBlackout = pendingCompanionFromBlackout;
+    pendingCompanionFromBlackout = false;
 }
 
 function updateCompanionConstellation(nowMs, delta = 1) {
@@ -1605,10 +1836,17 @@ function bindEvents() {
                 return;
             }
             const now = performance.now();
+            if (isSingularityBlackout()) {
+                setCounterVoidMode(true);
+                incrementSpaceCounter(now, true);
+                return;
+            }
+
+            setCounterVoidMode(false);
             registerUserActivity(now);
             blackHolePulse = Math.max(blackHolePulse, 11);
             spawnFoodFromBlackHole();
-            incrementSpaceCounter(now);
+            incrementSpaceCounter(now, false);
         }
     });
 }
@@ -1710,10 +1948,6 @@ function onPointerMove(event) {
     pointerTargetNDC.y = -(y * 2 - 1);
     pointerInside = true;
 
-    if (singularityCollapse > 0.001) {
-        registerUserActivity(now);
-    }
-
     if (powerAnchorClientX === null || powerAnchorClientY === null) {
         powerAnchorClientX = event.clientX;
         powerAnchorClientY = event.clientY;
@@ -1732,8 +1966,13 @@ function onPointerMove(event) {
     if (movedEnough) {
         powerAnchorClientX = event.clientX;
         powerAnchorClientY = event.clientY;
-        lastPointerMoveMs = now;
+        if (singularityCollapse > 0.18 || isSingularityBlackout()) {
+            handleBlackholeBreakByPointer(now);
+            return;
+        }
+        registerUserActivity(now);
         blackHolePower = 0;
+        setCounterVoidMode(false);
     }
 }
 
@@ -3873,6 +4112,7 @@ function animate(nowMs = performance.now()) {
     updateFoodMeshes(delta, nowMs);
     updateConstellation(nowMs, delta);
     updateCompanionConstellation(nowMs, delta);
+    updateCompanionBursts(delta, nowMs);
 
     renderer.render(scene, camera);
 }
