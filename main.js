@@ -17,7 +17,7 @@ const foods = [
     "ıslak hamburger"
 ];
 
-const BUILD_ID = "20260219-constellation-v29-starfield-restore-counter-polish";
+const BUILD_ID = "20260219-constellation-v30-starfield-counter-companion-fix";
 
 const BASE_STAR_COUNT = 22000;
 const MIN_STAR_COUNT = 7000;
@@ -107,11 +107,11 @@ const BIG_BANG_DEEP_BURST_MIN = 1.2;
 const BIG_BANG_DEEP_BURST_MAX = 4.8;
 const CONSTELLATION_BIGBANG_ENTRY_SPEED = 0.4;
 const CONSTELLATION_BIGBANG_ENTRY_FAST_MS = 8200;
-const CONSTELLATION_DUAL_ROT_X = -0.004;
-const CONSTELLATION_DUAL_ROT_Z = -0.0015;
-const COMPANION_SCALE_MULT = 1.14;
-const COMPANION_Z_OFFSET = 26;
-const DUAL_CONSTELLATION_SPLIT_X = 430;
+const CONSTELLATION_DUAL_ROT_X = -0.0012;
+const CONSTELLATION_DUAL_ROT_Z = -0.0005;
+const COMPANION_SCALE_MULT = 1.3;
+const COMPANION_Z_OFFSET = 12;
+const DUAL_CONSTELLATION_SPLIT_X = 360;
 const DUAL_CONSTELLATION_SLIDE_MS = 3600;
 const COMPANION_CONSTELLATION_FADE_MS = 1300;
 const COMPANION_CONSTELLATION_DRAW_MS = 4200;
@@ -211,8 +211,8 @@ const STAR_PASSIVE_INFLUENCE_RADIUS = 16;
 const FOOD_PASSIVE_INFLUENCE_RADIUS = 20;
 const STAR_SHADER_BASE_SIZE = 1.05;
 const DEEP_STAR_SHADER_BASE_SIZE = 0.84;
-const STAR_SHADER_OPACITY = 0.68;
-const DEEP_STAR_SHADER_OPACITY = 0.36;
+const STAR_SHADER_OPACITY = 0.88;
+const DEEP_STAR_SHADER_OPACITY = 0.58;
 const GALACTIC_BAND_NEAR_RATIO = 0.74;
 const GALACTIC_BAND_DEEP_RATIO = 0.66;
 const GALACTIC_BAND_NEAR_SIGMA = 0.2;
@@ -463,7 +463,7 @@ function createStarPointShaderMaterial(baseSize, baseOpacity) {
                 vOpacity = uOpacity;
                 vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
                 float dist = max(1.0, -mvPosition.z);
-                gl_PointSize = uBaseSize * aSize * (220.0 / dist);
+                gl_PointSize = clamp(uBaseSize * aSize * (1100.0 / dist), 1.0, 9.5);
                 gl_Position = projectionMatrix * mvPosition;
             }
         `,
@@ -488,7 +488,7 @@ function createStarPointShaderMaterial(baseSize, baseOpacity) {
         `,
         transparent: true,
         depthWrite: false,
-        depthTest: true,
+        depthTest: false,
         blending: THREE.AdditiveBlending,
         vertexColors: true
     });
@@ -1270,15 +1270,15 @@ function drawCounterSevenSegmentCanvas(valueText, voidMode, styleVariant) {
     const digitCount = Math.max(1, text.length);
     const rawValue = Number(valueText || 0);
     const warmUnlock = rawValue >= SPACE_COUNTER_TARGET ? 1 : 0;
-    const stylePhase = styleVariant >= 0 ? ((styleVariant % 9) / 9) : 0;
-    const hue = 205 - warmUnlock * 22 + stylePhase * 14;
-    const sat = 0.5 + warmUnlock * 0.16;
+    const stylePhase = styleVariant >= 0 ? ((styleVariant % 11) / 11) : 0;
+    const hue = 196 - warmUnlock * 18 + stylePhase * 22;
+    const sat = 0.46 + warmUnlock * 0.2;
 
-    const marginX = voidMode ? width * 0.075 : width * 0.16;
+    const marginX = voidMode ? width * 0.075 : width * 0.15;
     const marginY = voidMode ? height * 0.14 : height * 0.24;
     const contentW = Math.max(20, width - marginX * 2);
     const contentH = Math.max(20, height - marginY * 2);
-    const digitGap = contentW * (voidMode ? 0.06 : 0.08) / Math.max(1, digitCount);
+    const digitGap = contentW * (voidMode ? 0.052 : 0.075) / Math.max(1, digitCount);
     const digitW = (contentW - digitGap * Math.max(0, digitCount - 1)) / digitCount;
     const digitH = contentH;
     const startX = (width - (digitW * digitCount + digitGap * Math.max(0, digitCount - 1))) * 0.5;
@@ -1305,75 +1305,34 @@ function drawCounterSevenSegmentCanvas(valueText, voidMode, styleVariant) {
         ];
     };
 
-    counterDrawTmpColor.setHSL(hue / 360, sat, voidMode ? 0.82 : 0.76);
-    const starCore = counterColorToRgba(counterDrawTmpColor, 0.98);
-    counterDrawTmpColor.setHSL((hue + 8) / 360, 0.74, 0.66 + warmUnlock * 0.12);
-    const starGlow = counterColorToRgba(counterDrawTmpColor, voidMode ? 0.5 : 0.36);
-    counterDrawTmpColor.setHSL((hue + 2) / 360, 0.22, 0.82);
-    const segmentLine = counterColorToRgba(counterDrawTmpColor, voidMode ? 0.34 : 0.22);
-    const outerLine = counterColorToRgba(counterDrawTmpColor, voidMode ? 0.14 : 0.09);
+    const nodes = [];
+    const edges = [];
+    const addConstellationSegment = (ax, ay, bx, by, seed, density) => {
+        let prevIndex = -1;
+        for (let i = 0; i <= density; i += 1) {
+            const t = i / Math.max(1, density);
+            const px = THREE.MathUtils.lerp(ax, bx, t);
+            const py = THREE.MathUtils.lerp(ay, by, t);
+            const dx = bx - ax;
+            const dy = by - ay;
+            const len = Math.max(0.001, Math.hypot(dx, dy));
+            const nx = -dy / len;
+            const ny = dx / len;
+            const jitter = (seededUnit(seed * 31.17 + i * 7.31) - 0.5) * (voidMode ? 5.8 : 2.3);
+            const x = px + nx * jitter;
+            const y = py + ny * jitter;
 
-    const drawStellarDashSegment = (ax, ay, bx, by, seed) => {
-        const dx = bx - ax;
-        const dy = by - ay;
-        const len = Math.max(0.0001, Math.hypot(dx, dy));
-        const tx = dx / len;
-        const ty = dy / len;
-        const nx = -ty;
-        const ny = tx;
-        const dashLen = voidMode ? 42 : 24;
-        const gapLen = voidMode ? 14 : 7;
-        const baseLine = voidMode ? 2.6 : 1.9;
-        const haloLine = voidMode ? 6.2 : 4.3;
-
-        let cursor = 0;
-        let dashIndex = 0;
-        while (cursor < len) {
-            const start = cursor;
-            const end = Math.min(len, cursor + dashLen);
-            const sx = ax + tx * start;
-            const sy = ay + ty * start;
-            const ex = ax + tx * end;
-            const ey = ay + ty * end;
-
-            ctx.beginPath();
-            ctx.strokeStyle = outerLine;
-            ctx.lineWidth = haloLine;
-            ctx.lineCap = "round";
-            ctx.moveTo(sx, sy);
-            ctx.lineTo(ex, ey);
-            ctx.stroke();
-
-            ctx.beginPath();
-            ctx.strokeStyle = segmentLine;
-            ctx.lineWidth = baseLine;
-            ctx.lineCap = "round";
-            ctx.moveTo(sx, sy);
-            ctx.lineTo(ex, ey);
-            ctx.stroke();
-
-            const pointCount = Math.max(4, Math.floor((end - start) / (voidMode ? 3.8 : 2.6)));
-            for (let p = 0; p <= pointCount; p += 1) {
-                const t = p / Math.max(1, pointCount);
-                const px = THREE.MathUtils.lerp(sx, ex, t);
-                const py = THREE.MathUtils.lerp(sy, ey, t);
-                const jitter = (seededUnit(seed * 19.41 + dashIndex * 7.37 + p * 2.31) - 0.5) * (voidMode ? 1.6 : 0.8);
-                const x = px + nx * jitter;
-                const y = py + ny * jitter;
-                const coreR = (voidMode ? 1.75 : 1.22) * (0.78 + seededUnit(seed * 31.77 + dashIndex * 11.23 + p * 3.17) * 0.44);
-                const glowR = coreR * (voidMode ? 3.4 : 2.7);
-                const grad = ctx.createRadialGradient(x, y, 0, x, y, glowR);
-                grad.addColorStop(0, starCore);
-                grad.addColorStop(0.34, starGlow);
-                grad.addColorStop(1, "rgba(0,0,0,0)");
-                ctx.beginPath();
-                ctx.fillStyle = grad;
-                ctx.arc(x, y, glowR, 0, Math.PI * 2);
-                ctx.fill();
+            const nodeIndex = nodes.length;
+            nodes.push({
+                x,
+                y,
+                phase: seededUnit(seed * 13.11 + i * 3.9) * Math.PI * 2,
+                intensity: 0.64 + seededUnit(seed * 19.71 + i * 5.13) * 0.52
+            });
+            if (prevIndex >= 0) {
+                edges.push([prevIndex, nodeIndex, 0.78]);
             }
-
-            cursor += dashLen + gapLen;
-            dashIndex += 1;
+            prevIndex = nodeIndex;
         }
     };
 
@@ -1384,17 +1343,77 @@ function drawCounterSevenSegmentCanvas(valueText, voidMode, styleVariant) {
         const active = digitToSevenSegments(text[d]);
         for (let s = 0; s < active.length; s += 1) {
             const seg = segments[active[s]];
-            drawStellarDashSegment(seg[0], seg[1], seg[2], seg[3], (d + 1) * 23 + active[s] * 7);
+            addConstellationSegment(seg[0], seg[1], seg[2], seg[3], (d + 1) * 17 + active[s] * 5, voidMode ? 15 : 9);
         }
     }
 
-    const ambientCount = voidMode ? 220 : 72;
+    // Connect nearest stars to get a constellation-web look.
+    const linkDistance = (voidMode ? 46 : 24);
+    const linkDistanceSq = linkDistance * linkDistance;
+    for (let i = 0; i < nodes.length; i += 1) {
+        let links = 0;
+        for (let j = i + 1; j < nodes.length && links < 2; j += 1) {
+            const dx = nodes[j].x - nodes[i].x;
+            const dy = nodes[j].y - nodes[i].y;
+            const distSq = dx * dx + dy * dy;
+            if (distSq > linkDistanceSq) {
+                continue;
+            }
+            const chance = 0.18 + (1 - distSq / linkDistanceSq) * 0.42;
+            if (seededUnit((i + 1) * 23.17 + (j + 1) * 9.31 + stylePhase * 7.11) > chance) {
+                continue;
+            }
+            edges.push([i, j, 0.38 + (1 - distSq / linkDistanceSq) * 0.36]);
+            links += 1;
+        }
+    }
+
+    counterDrawTmpColor.setHSL(hue / 360, sat, voidMode ? 0.82 : 0.74);
+    const starCore = counterColorToRgba(counterDrawTmpColor, 0.98);
+    counterDrawTmpColor.setHSL((hue + 9) / 360, 0.68, 0.64 + warmUnlock * 0.12);
+    const starGlow = counterColorToRgba(counterDrawTmpColor, voidMode ? 0.54 : 0.34);
+    counterDrawTmpColor.setHSL((hue + 4) / 360, 0.28, 0.86);
+    const edgeColor = counterColorToRgba(counterDrawTmpColor, voidMode ? 0.25 : 0.15);
+
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    for (let i = 0; i < edges.length; i += 1) {
+        const edge = edges[i];
+        const a = nodes[edge[0]];
+        const b = nodes[edge[1]];
+        if (!a || !b) {
+            continue;
+        }
+        ctx.beginPath();
+        ctx.lineWidth = (voidMode ? 1.8 : 1.2) * edge[2];
+        ctx.strokeStyle = edgeColor;
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+    }
+
+    for (let i = 0; i < nodes.length; i += 1) {
+        const node = nodes[i];
+        const pulse = 0.82 + Math.sin(node.phase + stylePhase * 6.0) * 0.18;
+        const coreR = (voidMode ? 2.05 : 1.22) * node.intensity * pulse;
+        const glowR = coreR * (voidMode ? 3.6 : 2.9);
+        const grad = ctx.createRadialGradient(node.x, node.y, 0, node.x, node.y, glowR);
+        grad.addColorStop(0, starCore);
+        grad.addColorStop(0.34, starGlow);
+        grad.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.beginPath();
+        ctx.fillStyle = grad;
+        ctx.arc(node.x, node.y, glowR, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    const ambientCount = voidMode ? 240 : 84;
     counterDrawTmpColor.setHSL(hue / 360, 0.2, 0.74);
-    ctx.fillStyle = counterColorToRgba(counterDrawTmpColor, voidMode ? 0.12 : 0.08);
+    ctx.fillStyle = counterColorToRgba(counterDrawTmpColor, voidMode ? 0.16 : 0.09);
     for (let i = 0; i < ambientCount; i += 1) {
-        const sx = seededUnit((i + 1) * 13.27 + stylePhase * 5.4 + text.length * 0.9) * width;
-        const sy = seededUnit((i + 1) * 27.13 + stylePhase * 9.2 + text.length * 0.61) * height;
-        const rr = (voidMode ? 1.2 : 0.72) * (0.35 + seededUnit((i + 1) * 3.93) * 0.7);
+        const sx = seededUnit((i + 1) * 17.37 + stylePhase * 7.1 + text.length * 0.9) * width;
+        const sy = seededUnit((i + 1) * 29.11 + stylePhase * 11.4 + text.length * 0.53) * height;
+        const rr = (voidMode ? 1.45 : 0.82) * (0.4 + seededUnit((i + 1) * 3.77) * 0.9);
         ctx.beginPath();
         ctx.arc(sx, sy, rr, 0, Math.PI * 2);
         ctx.fill();
@@ -1481,15 +1500,11 @@ function updateStarCounterVisual(nowMs) {
 
     const { halfWidth, halfHeight } = getPlaneHalfExtentsAtZ(STAR_COUNTER_WORLD_Z);
     const blackout = isSingularityBlackout();
-    if (counterVoidMode) {
-        starCounterGroup.position.set(camera.position.x, camera.position.y, STAR_COUNTER_WORLD_Z);
-    } else {
-        starCounterGroup.position.set(
-            camera.position.x + halfWidth - STAR_COUNTER_MARGIN_X,
-            camera.position.y + halfHeight - STAR_COUNTER_MARGIN_Y,
-            STAR_COUNTER_WORLD_Z
-        );
-    }
+    starCounterGroup.position.set(
+        camera.position.x + halfWidth - STAR_COUNTER_MARGIN_X,
+        camera.position.y + halfHeight - STAR_COUNTER_MARGIN_Y,
+        STAR_COUNTER_WORLD_Z
+    );
     starCounterGroup.quaternion.copy(camera.quaternion);
 
     const textureAspect = starCounterCanvas
@@ -1498,18 +1513,8 @@ function updateStarCounterVisual(nowMs) {
 
     let widthUnits;
     let heightUnits;
-    if (counterVoidMode) {
-        widthUnits = halfWidth * 1.92;
-        heightUnits = widthUnits / textureAspect;
-        const maxHeight = halfHeight * 1.92;
-        if (heightUnits > maxHeight) {
-            heightUnits = maxHeight;
-            widthUnits = heightUnits * textureAspect;
-        }
-    } else {
-        heightUnits = 2.7;
-        widthUnits = heightUnits * textureAspect;
-    }
+    heightUnits = 2.7;
+    widthUnits = heightUnits * textureAspect;
 
     if (singularityCollapse > 0.0001 && !blackout) {
         pointerAtZ(STAR_COUNTER_WORLD_Z, singularityVectorA);
@@ -1850,7 +1855,7 @@ function loadCompanionConstellationFromImage(imageUrl, fallbackUrl = null) {
     image.src = imageUrl;
 }
 
-function extractConstellationTriples(image) {
+function extractConstellationTriples(image, options = {}) {
     const scanScale = Math.min(1, CONSTELLATION_SCAN_MAX_WIDTH / image.width);
     const scanWidth = Math.max(96, Math.floor(image.width * scanScale));
     const scanHeight = Math.max(64, Math.floor(image.height * scanScale));
@@ -1876,8 +1881,11 @@ function extractConstellationTriples(image) {
         lum[i] = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
     }
 
-    const lumThreshold = luminancePercentile(lum, 0.988);
-    const contrastThreshold = 0.018;
+    const lumPercentile = Number.isFinite(options.lumPercentile) ? options.lumPercentile : 0.988;
+    const contrastThreshold = Number.isFinite(options.contrastThreshold) ? options.contrastThreshold : 0.018;
+    const dustChanceBoost = Number.isFinite(options.dustChanceBoost) ? options.dustChanceBoost : 0;
+    const nodeChanceBoost = Number.isFinite(options.nodeChanceBoost) ? options.nodeChanceBoost : 0;
+    const lumThreshold = luminancePercentile(lum, lumPercentile);
     const rawMask = new Uint8Array(pixelCount);
 
     for (let y = 0; y < scanHeight; y += 1) {
@@ -1950,7 +1958,7 @@ function extractConstellationTriples(image) {
 
             const hash = ((x * 73856093) ^ (y * 19349663) ^ ((x + y) * 83492791)) >>> 0;
             const brightnessBoost = THREE.MathUtils.clamp((lum[idx] - lumThreshold) * 6.2, 0, 1);
-            const dustChance = THREE.MathUtils.clamp(0.56 + brightnessBoost * 0.34, 0.42, 0.95);
+            const dustChance = THREE.MathUtils.clamp(0.56 + brightnessBoost * 0.34 + dustChanceBoost, 0.42, 0.98);
             if ((hash % 1000) / 1000 > dustChance) {
                 continue;
             }
@@ -1960,7 +1968,7 @@ function extractConstellationTriples(image) {
             const wz = -190 + (Math.random() - 0.5) * (CONSTELLATION_DEPTH_JITTER * 2);
             dustTriples.push(wx, wy, wz);
 
-            const nodeChance = THREE.MathUtils.clamp(0.24 + brightnessBoost * 0.46, 0.18, 0.82);
+            const nodeChance = THREE.MathUtils.clamp(0.24 + brightnessBoost * 0.46 + nodeChanceBoost, 0.18, 0.9);
             if (((hash >>> 11) % 1000) / 1000 <= nodeChance) {
                 nodeTriples.push(
                     wx + (Math.random() - 0.5) * 1.1,
@@ -2298,7 +2306,12 @@ function buildCompanionConstellation(image) {
         return;
     }
 
-    const triples = extractConstellationTriples(image);
+    const triples = extractConstellationTriples(image, {
+        lumPercentile: 0.972,
+        contrastThreshold: 0.0105,
+        dustChanceBoost: 0.2,
+        nodeChanceBoost: 0.22
+    });
     if (!triples) {
         console.warn("Companion constellation verisi olusturulamadi.");
         return;
@@ -2318,7 +2331,7 @@ function buildCompanionConstellation(image) {
     dustGeometry.setDrawRange(0, 0);
     const dustMaterial = new THREE.PointsMaterial({
         color: 0xffffff,
-        size: 1.04,
+        size: 1.32,
         sizeAttenuation: true,
         transparent: true,
         opacity: 0,
@@ -2337,7 +2350,7 @@ function buildCompanionConstellation(image) {
     nodeGeometry.setDrawRange(0, 0);
     const nodeMaterial = new THREE.PointsMaterial({
         color: 0xe6f2ff,
-        size: 2.16,
+        size: 2.9,
         sizeAttenuation: true,
         transparent: true,
         opacity: 0,
@@ -2532,16 +2545,16 @@ function updateCompanionConstellation(nowMs, delta = 1) {
     const visibilityBoost = CONSTELLATION_VISIBILITY_MULT * powerBoost * collapseVisibility * drawFlash * dualBoost;
 
     companionConstellation.dustMaterial.opacity = Math.min(
-        0.58,
+        0.72,
         (0.052 + pulse * 0.016) * fadeProgress * drawProgress * visibilityBoost * CONSTELLATION_DUST_OPACITY_MULT
     );
     companionConstellation.nodeMaterial.opacity = Math.min(
-        0.88,
+        1.0,
         (0.14 + pulse * 0.03) * fadeProgress * drawProgress * visibilityBoost * CONSTELLATION_NODE_OPACITY_MULT
     );
 
     const nearLineOpacity = Math.min(
-        0.72,
+        0.94,
         (0.066 + pulse * 0.022) * fadeProgress * drawProgress * visibilityBoost * CONSTELLATION_LINE_OPACITY_MULT
     );
     if (companionConstellation.nearLineMaterial) {
@@ -4636,7 +4649,7 @@ function updateDeepStars(delta, nowMs) {
     }
 
     const collapse = singularityCollapse;
-    const sceneDarkness = 1 - collapse * 0.97;
+    const sceneDarkness = 1 - Math.pow(collapse, 3.2) * 0.97;
     const hasCollapse = collapse > 0.0001;
     const cameraX = camera.position.x;
     const cameraY = camera.position.y;
@@ -4738,7 +4751,7 @@ function updateStars(delta, nowMs) {
     const collapsePull = THREE.MathUtils.clamp(0.08 + collapse * 1.12, 0, 1.35);
     const hasCollapse = collapse > 0.0001;
     const hasInfluence = blackHoleRadius > 0.5 || hasCollapse;
-    const sceneDarkness = 1 - collapse * 0.97;
+    const sceneDarkness = 1 - Math.pow(collapse, 3.2) * 0.97;
 
     const cameraX = camera.position.x;
     const cameraY = camera.position.y;
@@ -4749,8 +4762,8 @@ function updateStars(delta, nowMs) {
 
     const passiveInfluenceRadius =
         STAR_PASSIVE_INFLUENCE_RADIUS +
-        blackHoleRadius * 3.2 +
-        blackHolePower * 24;
+        blackHoleRadius * 1.1 +
+        blackHolePower * 6;
     const influenceRadius = Math.max(
         STAR_MIN_INFLUENCE_RADIUS,
         blackHoleRadius * STAR_INFLUENCE_MULT * (1 + blackHolePower * 0.22),
@@ -5302,7 +5315,7 @@ function animate(nowMs = performance.now()) {
     updateDualConstellationProgress(nowMs);
 
     updateBlackHole(delta, nowMs);
-    setCounterVoidMode(isSingularityBlackout());
+    setCounterVoidMode(false);
     updateBlackoutCountdown(nowMs);
     updateStarCounterVisual(nowMs);
 
