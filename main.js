@@ -17,7 +17,7 @@ const foods = [
     "ıslak hamburger"
 ];
 
-const BUILD_ID = "20260219-constellation-v24-void-countdown-bigbang";
+const BUILD_ID = "20260219-constellation-v25-manual-void-countdown";
 
 const BASE_STAR_COUNT = 22000;
 const MIN_STAR_COUNT = 7000;
@@ -88,8 +88,6 @@ const STAR_COUNTER_DIGIT_HEIGHT = 15.8;
 const STAR_COUNTER_DIGIT_GAP = 2.8;
 const STAR_COUNTER_SEGMENT_POINT_STEP = 0.52;
 const STAR_COUNTER_VOID_SCALE = 2.28;
-const VOID_COUNTDOWN_ARM_MS = 900;
-const VOID_COUNTDOWN_STEP_MS = 260;
 const BIG_BANG_FLASH_MS = 1700;
 const BIG_BANG_STAR_BURST_MIN = 2.4;
 const BIG_BANG_STAR_BURST_MAX = 8.8;
@@ -307,9 +305,6 @@ let starCounterGlowUntilMs = 0;
 let starCounterDisplayText = "0";
 let counterVoidMode = false;
 let voidCounterPrimed = false;
-let voidCountdownActive = false;
-let voidCountdownValue = 0;
-let voidCountdownNextAtMs = 0;
 let lastBlackoutSpacePressMs = 0;
 let bigBangState = null;
 let dualConstellationActive = false;
@@ -1092,7 +1087,7 @@ function createStarCounterUI() {
         blending: THREE.AdditiveBlending
     });
     starCounterPoints = new THREE.Points(starCounterGeometry, material);
-    starCounterPoints.renderOrder = 1100;
+    starCounterPoints.renderOrder = 1250;
     group.add(starCounterPoints);
 
     starCounterGroup = group;
@@ -1264,18 +1259,31 @@ function isSingularityBlackout() {
 }
 
 function cancelVoidCountdown() {
-    voidCountdownActive = false;
-    voidCountdownValue = 0;
-    voidCountdownNextAtMs = 0;
+    voidCounterPrimed = false;
+    lastBlackoutSpacePressMs = 0;
 }
 
-function startVoidCountdown(nowMs = performance.now()) {
-    if (spaceLaunchCount <= 0) {
-        return;
+function handleBlackoutSpacePress(nowMs = performance.now()) {
+    if (!isSingularityBlackout()) {
+        return false;
     }
-    voidCountdownActive = true;
-    voidCountdownValue = spaceLaunchCount;
-    voidCountdownNextAtMs = nowMs + VOID_COUNTDOWN_STEP_MS;
+
+    setCounterVoidMode(true);
+    voidCounterPrimed = true;
+    lastBlackoutSpacePressMs = nowMs;
+
+    if (spaceLaunchCount <= 0) {
+        return true;
+    }
+
+    spaceLaunchCount = Math.max(0, spaceLaunchCount - 1);
+    starCounterGlowUntilMs = nowMs + 220;
+    updateStarCounterDisplay();
+
+    if (spaceLaunchCount <= 0) {
+        triggerBigBang(nowMs);
+    }
+    return true;
 }
 
 function triggerBigBang(nowMs = performance.now()) {
@@ -1366,41 +1374,12 @@ function updateVoidCounterCountdown(nowMs) {
     const blackout = isSingularityBlackout();
     if (!blackout) {
         cancelVoidCountdown();
-        voidCounterPrimed = false;
-        lastBlackoutSpacePressMs = 0;
         return;
     }
 
-    if (!voidCounterPrimed && spaceLaunchCount > 0) {
+    if (!voidCounterPrimed && spaceLaunchCount > 0 && !bigBangState) {
         voidCounterPrimed = true;
-        if (lastBlackoutSpacePressMs <= 0) {
-            lastBlackoutSpacePressMs = nowMs;
-        }
-    }
-
-    if (!voidCounterPrimed || bigBangState) {
-        return;
-    }
-
-    if (!voidCountdownActive) {
-        if (spaceLaunchCount > 0 && nowMs - lastBlackoutSpacePressMs >= VOID_COUNTDOWN_ARM_MS) {
-            startVoidCountdown(nowMs);
-        }
-        return;
-    }
-
-    if (nowMs < voidCountdownNextAtMs) {
-        return;
-    }
-
-    voidCountdownNextAtMs = nowMs + VOID_COUNTDOWN_STEP_MS;
-    voidCountdownValue = Math.max(0, voidCountdownValue - 1);
-    spaceLaunchCount = voidCountdownValue;
-    starCounterGlowUntilMs = nowMs + 120;
-    updateStarCounterDisplay();
-
-    if (voidCountdownValue <= 0) {
-        triggerBigBang(nowMs);
+        lastBlackoutSpacePressMs = nowMs;
     }
 }
 
@@ -1453,17 +1432,10 @@ function updateDualConstellationProgress(nowMs) {
     dualConstellationProgress = t * t * (3 - 2 * t);
 }
 
-function incrementSpaceCounter(nowMs = performance.now(), fromBlackout = false) {
+function incrementSpaceCounter(nowMs = performance.now()) {
     spaceLaunchCount += 1;
     starCounterGlowUntilMs = nowMs + 360;
     updateStarCounterDisplay();
-
-    if (fromBlackout) {
-        voidCounterPrimed = true;
-        lastBlackoutSpacePressMs = nowMs;
-        cancelVoidCountdown();
-        return;
-    }
 
     if (!dualConstellationActive && !companionConstellationLoading && !companionConstellation && spaceLaunchCount >= SPACE_COUNTER_TARGET) {
         pendingCompanionFromBlackout = false;
@@ -1928,8 +1900,6 @@ function handleBlackholeBreakByPointer(nowMs = performance.now()) {
     companionSpawnedFromBlackout = false;
     pendingCompanionFromBlackout = false;
     cancelVoidCountdown();
-    voidCounterPrimed = false;
-    lastBlackoutSpacePressMs = 0;
     setCounterVoidMode(false);
     if (constellationEntryState) {
         snapConstellationPayloadToBase(constellationEntryState.dust);
@@ -2385,8 +2355,7 @@ function bindEvents() {
                 return;
             }
             if (isSingularityBlackout()) {
-                setCounterVoidMode(true);
-                incrementSpaceCounter(now, true);
+                handleBlackoutSpacePress(now);
                 return;
             }
 
@@ -2394,7 +2363,7 @@ function bindEvents() {
             registerUserActivity(now);
             blackHolePulse = Math.max(blackHolePulse, 11);
             spawnFoodFromBlackHole();
-            incrementSpaceCounter(now, false);
+            incrementSpaceCounter(now);
         }
     });
 }
